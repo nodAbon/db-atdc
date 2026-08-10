@@ -34,39 +34,25 @@ export default function AppSidebar({
           <div className="sidebar-section-items">
             {SIDEBAR_ITEMS.map((item) => {
               const Icon = item.icon;
-              const isRoute = !item.tab;
-              const isActive = isRoute
-                ? pathname === item.href
-                : pathname === '/' && activeTab === item.tab;
-
-              if (isRoute) {
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    className={`tab-btn${isActive ? ' active' : ''}`}
-                  >
-                    <Icon size={18} style={{ color: isActive ? 'var(--blue)' : 'var(--text-3)' }} />
-                    <span>{item.label}</span>
-                  </Link>
-                );
-              }
+              const isTab = Boolean(item.tab);
+              const isActive = isTab
+                ? pathname === '/' && activeTab === item.tab
+                : pathname === item.href;
 
               return (
-                <button
-                  key={item.tab}
-                  type="button"
+                <Link
+                  key={item.href}
+                  href={item.href}
                   className={`tab-btn${isActive ? ' active' : ''}`}
                   onClick={() => {
-                    setActiveTab(item.tab);
-                    if (pathname !== '/') {
-                      window.location.href = item.href;
+                    if (isTab && setActiveTab) {
+                      setActiveTab(item.tab);
                     }
                   }}
                 >
                   <Icon size={18} style={{ color: isActive ? 'var(--blue)' : 'var(--text-3)' }} />
                   <span>{item.label}</span>
-                </button>
+                </Link>
               );
             })}
           </div>

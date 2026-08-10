@@ -125,7 +125,7 @@ function DashboardContent() {
 
   return (
     <div className="ga-theme" data-theme={theme}>
-      <AppSidebar activeTab={activeTab} />
+      <AppSidebar activeTab={activeTab} setActiveTab={setActiveTab} theme={theme} toggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')} />
       <main className="main-content" style={{ flexGrow: 1, padding: '24px 32px', overflowY: 'auto' }}>
         {activeTab === 'DASHBOARD' && (
           <DashboardTab
