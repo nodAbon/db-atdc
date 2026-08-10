@@ -95,6 +95,13 @@ function parseATime(aTime) {
   return `${s.substring(0, 4)}-${s.substring(4, 6)}-${s.substring(6, 8)}T${s.substring(8, 10)}:${s.substring(10, 12)}:${s.substring(12, 14)}+09:00`;
 }
 
+function buildGateName(row) {
+  const parts = [row.e_group, row.e_mode, row.e_type, row.e_result]
+    .map((value) => String(value ?? '').trim())
+    .filter(Boolean);
+  return parts.length > 0 ? parts.join(' / ') : 'CAPS';
+}
+
 function chunkArray(array, size = 500) {
   const chunks = [];
   for (let i = 0; i < array.length; i += size) {
@@ -120,8 +127,6 @@ async function syncFromExcelFile(filePath) {
 
   for (const r of rows) {
     const empNoRaw = r['사번'] || r['사원번호'] || r['emp_no'] || r['I_EMPLOY_NO'] || r['IDNO'] || '';
-    const name = r['성명'] || r['이름'] || r['name'] || r['N_EMPLOY_NAME'] || '';
-    const dept = r['부서'] || r['부서명'] || r['dept'] || r['N_DEPT'] || '';
     const dateRaw = r['일자'] || r['출입일자'] || r['e_date'] || r['날짜'] || '';
     const timeRaw = r['시각'] || r['출입시각'] || r['e_time'] || r['시간'] || '';
     const gate = r['게이트'] || r['단말기'] || r['gate'] || r['e_name'] || 'CAPS';
@@ -143,11 +148,12 @@ async function syncFromExcelFile(filePath) {
     records.push({
       sabun,
       emp_no: empNo,
-      name: String(name).trim(),
-      dept: String(dept).trim(),
+      card_no: r['카드번호'] || r['card_no'] || null,
       a_time: aTime,
-      time_event: parseATime(aTime),
-      e_name: String(gate).trim() || 'CAPS',
+      log_time: parseATime(aTime),
+      eq_code: null,
+      gate_name: String(gate).trim() || 'CAPS',
+      flag1: null,
       event_type: '출입',
       source: 'caps',
       synced_at: new Date().toISOString(),
@@ -342,8 +348,8 @@ async function syncAttendance2026(conn) {
     if (rawDate.length !== 8 || rawTime.length < 6) continue;
 
     const aTime = `${rawDate}${rawTime.slice(0, 6)}`;
-    const empNo = normalizeEmpNo(r.emp_no);
-    const sabun = `${MY_COMPANY_CODE}${empNo.padStart(8, '0')}`;
+    const empNo = normalizeEmpNo(r.emp_no || r.idno);
+    const sabun = String(r.idno || '').trim() || `${MY_COMPANY_CODE}${String(empNo).padStart(8, '0')}`;
     const key = `${sabun}_${aTime}`;
 
     if (attSeen.has(key)) continue;
@@ -351,16 +357,13 @@ async function syncAttendance2026(conn) {
 
     attRecords.push({
       sabun,
-      emp_no: empNo,
-      name: String(r.name || '').trim(),
-      dept: String(r.dept || '').trim(),
+      emp_no: empNo || null,
+      card_no: r.card_no ? String(r.card_no) : null,
       a_time: aTime,
-      time_event: parseATime(aTime),
-      card_no: r.card_no ? String(r.card_no).trim() : null,
-      gate_code: r.gate_code ? String(r.gate_code).trim() : null,
-      e_name: 'CAPS',
-      e_group: r.e_group ? String(r.e_group).trim() : null,
-      e_node: r.e_mode ? String(r.e_mode).trim() : null,
+      log_time: parseATime(aTime),
+      eq_code: r.gate_code ? String(r.gate_code) : null,
+      gate_name: buildGateName(r) || 'CAPS',
+      flag1: null,
       event_type: '출입',
       source: 'caps',
       synced_at: new Date().toISOString(),
