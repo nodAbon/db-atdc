@@ -1,6 +1,6 @@
 /**
  * ==============================================================================
- * db-atdc 2026년도 전체 근태/출입/연차 일괄 적재 스크립트
+ * db-atdc 2026년도 전체 근태/출입/연차 일괄 적재 스크립트 (누락 방지 풀 스캔)
  * ==============================================================================
  * 
  * [사용 방법 1] MySQL 직접 연동 (사내망/VPN 접속 상태):
@@ -49,7 +49,6 @@ function loadEnv() {
 loadEnv();
 
 const MY_COMPANY_CODE = process.env.MY_COMPANY_CODE || '1700';
-const E_GROUP_FILTER = process.env.CAPS_E_GROUP || '09';
 
 const MYSQL_CONFIG = {
   host: process.env.MYSQL_HOST || 'Prd-Hecto-WHR-Ext-NLB-8e82b66ed560637d.elb.ap-northeast-2.amazonaws.com',
@@ -57,7 +56,7 @@ const MYSQL_CONFIG = {
   password: process.env.MYSQL_PASSWORD || 'Hecto12#$',
   database: process.env.MYSQL_DATABASE || 'whr',
   port: parseInt(process.env.MYSQL_PORT, 10) || 3306,
-  connectTimeout: 15000,
+  connectTimeout: 20000,
 };
 
 const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://gbfoempwoeurhhlxqxgy.supabase.co';
@@ -252,7 +251,7 @@ async function syncLeaves2026(conn) {
       y.I_STATUS                   AS status
     FROM hr_yuncha_use y
     INNER JOIN hr_employee e ON e.I_COMPANY = y.I_COMPANY AND e.I_EMPLOY_NO = y.I_EMPLOY_NO
-    INNER JOIN hr_department d ON d.I_COMPANY = e.I_COMPANY AND d.I_DEPT = e.I_DEPT
+    LEFT JOIN hr_department d ON d.I_COMPANY = e.I_COMPANY AND d.I_DEPT = e.I_DEPT
     WHERE y.I_COMPANY = ?
       AND y.I_STATUS = '40'
       AND (y.D_START_DATE >= '20260101' OR y.D_END_DATE >= '20260101')
@@ -300,8 +299,9 @@ async function syncLeaves2026(conn) {
 }
 
 async function syncAttendance2026(conn) {
-  console.log('\n[3/3] 🚪 2026년 전체 CAPS 출입 기록 동기화 중 (2026-01-01 ~ 현재)...');
+  console.log('\n[3/3] 🚪 2026년 전체 CAPS 출입 기록 전체 스캔 동기화 중 (2026-01-01 ~ 현재)...');
 
+  // E_GROUP 필터 제거 및 다중 매칭(사번 12자리, 사번 8자리, 이름 매칭)으로 100% 전수 조회!
   const [rows] = await conn.execute(`
     SELECT
       e.I_EMPLOY_NO AS emp_no,
@@ -319,18 +319,18 @@ async function syncAttendance2026(conn) {
     FROM tenter t
     INNER JOIN hr_employee e ON
       e.I_COMPANY = ?
-      AND t.E_IDNO IS NOT NULL
-      AND t.E_IDNO <> ''
-      AND e.I_COMPANY = LEFT(t.E_IDNO, 4)
-      AND e.I_EMPLOY_NO = RIGHT(t.E_IDNO, 8)
-    INNER JOIN hr_department d ON
+      AND (
+        (e.I_COMPANY = LEFT(t.E_IDNO, 4) AND e.I_EMPLOY_NO = RIGHT(t.E_IDNO, 8))
+        OR (e.I_EMPLOY_NO = t.E_IDNO)
+        OR (t.E_NAME = e.N_EMPLOY_NAME AND t.E_NAME IS NOT NULL AND t.E_NAME <> '')
+      )
+    LEFT JOIN hr_department d ON
       d.I_COMPANY = e.I_COMPANY
       AND d.I_DEPT = e.I_DEPT
     WHERE COALESCE(e.I_RETIRE_YN, '0') <> '1'
-      AND t.E_GROUP = ?
       AND t.E_DATE >= '20260101'
     ORDER BY t.E_DATE ASC, t.E_TIME ASC
-  `, [MY_COMPANY_CODE, E_GROUP_FILTER]);
+  `, [MY_COMPANY_CODE]);
 
   if (!rows || rows.length === 0) {
     console.log('⚠️ 2026년 출입 기록 데이터가 없습니다.');
@@ -370,7 +370,7 @@ async function syncAttendance2026(conn) {
     });
   }
 
-  console.log(`📦 2026년 정제된 출입 기록: ${attRecords.length.toLocaleString()}건`);
+  console.log(`📦 2026년 정제된 고유 출입 기록: ${attRecords.length.toLocaleString()}건`);
   const attChunks = chunkArray(attRecords, 500);
   let inserted = 0;
   for (let i = 0; i < attChunks.length; i++) {
@@ -394,8 +394,8 @@ async function syncFromMySQL() {
 
   try {
     console.log('================================================================');
-    console.log('🚀 [db-atdc] 2026년도 전체 근태/출입/연차 MySQL 일괄 동기화 시작');
-    console.log(`📌 법인 코드: ${MY_COMPANY_CODE} | 그룹: ${E_GROUP_FILTER}`);
+    console.log('🚀 [db-atdc] 2026년도 전체 근태/출입/연차 MySQL 풀스캔 동기화 시작');
+    console.log(`📌 법인 코드: ${MY_COMPANY_CODE}`);
     console.log(`📌 MySQL 호스트: ${MYSQL_CONFIG.host}:${MYSQL_CONFIG.port}`);
     console.log(`📌 Supabase URL: ${supabaseUrl}`);
     console.log('================================================================');

@@ -43,13 +43,15 @@ export async function GET(request) {
         .select('emp_no, a_time, log_time, gate_name, sabun')
         .gte('a_time', fromTime)
         .lte('a_time', toTime)
-        .order('a_time', { ascending: true }),
+        .order('a_time', { ascending: true })
+        .limit(20000),
       supabaseAdmin
         .from('db_leaves')
         .select('emp_no, emp_name, start_date, end_date, leave_code, leave_name, leave_days, status')
         .eq('status', '40')
         .lte('start_date', toDateStr)
-        .gte('end_date', fromDateStr),
+        .gte('end_date', fromDateStr)
+        .limit(5000),
     ]);
 
     if (empRes.error) throw empRes.error;

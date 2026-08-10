@@ -48,7 +48,8 @@ export async function GET(request) {
       .select('id, emp_no, a_time, log_time, gate_name, sabun')
       .gte('a_time', fromTime)
       .lte('a_time', toTime)
-      .order('a_time', { ascending: false });
+      .order('a_time', { ascending: false })
+      .limit(20000);
 
     if (rawEmpNo && rawEmpNo !== 'ALL') {
       const cleanEmpNo = rawEmpNo.replace(/^1700/, '');
