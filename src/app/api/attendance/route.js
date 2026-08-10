@@ -27,16 +27,20 @@ export async function GET(request) {
     const excludeLogs = searchParams.get('excludeLogs') === 'true';
     const empNoFilter = searchParams.get('empNo') || null;
 
+    const [attendanceData, employeeSchedules] = await Promise.all([
+      fetchAttendanceLogs(month, { dashboardOnly, excludeLogs, empNo: empNoFilter }),
+      fetchEmployeeSchedules(),
+    ]);
+
     const {
-      employees,
-      logs: rawLogs,
+      employees = [],
+      logs: rawLogs = [],
       leaves = [],
       corrections = [],
       overrides = [],
       logAdjustments = [],
-    } = await fetchAttendanceLogs(month, { dashboardOnly, excludeLogs, empNo: empNoFilter });
+    } = attendanceData;
 
-    const employeeSchedules = await fetchEmployeeSchedules();
     const employeeScheduleMap = buildEmployeeScheduleMap(employeeSchedules);
     const overrideMap = buildScheduleOverrideMap(overrides);
 
@@ -244,7 +248,8 @@ export async function GET(request) {
       allLogs: parsedLogs,
     }, {
       headers: {
-        'Cache-Control': 'public, s-maxage=3, stale-while-revalidate=15',
+        'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+        'Pragma': 'no-cache',
       },
     });
   } catch (error) {

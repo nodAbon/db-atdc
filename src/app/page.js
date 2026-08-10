@@ -21,7 +21,7 @@ function DashboardContent() {
     deptData: [],
     leaves: [],
   });
-  const [dashboardLoading, setDashboardLoading] = useState(false);
+  const [dashboardLoading, setDashboardLoading] = useState(true);
   const [calendarMonth, setCalendarMonth] = useState(() => getCurrentMonthKey());
   const [selectedCalendarDate, setSelectedCalendarDate] = useState(null);
   const [viewDeptFilter, setViewDeptFilter] = useState('ALL');
@@ -54,11 +54,17 @@ function DashboardContent() {
     return () => clearInterval(timer);
   }, []);
 
-  // 오늘 대시보드 데이터 로드
+  // 오늘 대시보드 데이터 로드 (캐시 무효화 및 즉시 반영)
   const fetchDashboardData = useCallback(async () => {
     setDashboardLoading(true);
     try {
-      const res = await fetch('/api/attendance?dashboardOnly=true');
+      const res = await fetch(`/api/attendance?dashboardOnly=true&_t=${Date.now()}`, {
+        cache: 'no-store',
+        headers: {
+          'Pragma': 'no-cache',
+          'Cache-Control': 'no-cache',
+        },
+      });
       const json = await res.json();
       if (json.success) {
         setDashboardData({
@@ -78,7 +84,13 @@ function DashboardContent() {
   const fetchMonthlyData = useCallback(async (m) => {
     setMonthlyLoading(true);
     try {
-      const res = await fetch(`/api/attendance?month=${m}`);
+      const res = await fetch(`/api/attendance?month=${m}&_t=${Date.now()}`, {
+        cache: 'no-store',
+        headers: {
+          'Pragma': 'no-cache',
+          'Cache-Control': 'no-cache',
+        },
+      });
       const json = await res.json();
       if (json.success) {
         setMonthlyData({
@@ -102,8 +114,10 @@ function DashboardContent() {
   useEffect(() => {
     if (activeTab === 'MONTHLY') {
       fetchMonthlyData(selectedMonth);
+    } else if (activeTab === 'DASHBOARD' && dashboardData.employeeStatuses.length === 0) {
+      fetchDashboardData();
     }
-  }, [activeTab, selectedMonth, fetchMonthlyData]);
+  }, [activeTab, selectedMonth, dashboardData.employeeStatuses.length, fetchMonthlyData, fetchDashboardData]);
 
   // 부서 옵션 목록
   const deptOptions = useMemo(() => {

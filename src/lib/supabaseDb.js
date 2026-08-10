@@ -86,7 +86,7 @@ export async function fetchAttendanceLogs(month, { dashboardOnly = false, exclud
       return q;
     };
 
-    // 3. 전수 페칭 병렬 실행
+    // 3. 전수 페칭 병렬 실행 (대시보드 전용 최적화 & 실패 방지)
     const [
       employeesData,
       logsData,
@@ -95,12 +95,16 @@ export async function fetchAttendanceLogs(month, { dashboardOnly = false, exclud
       overrideData,
       adjData,
     ] = await Promise.all([
-      fetchAllRows(empQueryFn),
-      !excludeLogs ? fetchAllRows(logQueryFn) : Promise.resolve([]),
-      fetchAllRows(leaveQueryFn),
-      fetchAllRows(() => supabaseAdmin.from('db_attendance_corrections').select('*')),
-      fetchAllRows(() => supabaseAdmin.from('db_schedule_overrides').select('*')),
-      fetchAllRows(() => supabaseAdmin.from('db_attendance_log_adjustments').select('*')),
+      fetchAllRows(empQueryFn).catch((e) => { console.warn('empQuery error:', e.message); return []; }),
+      !excludeLogs ? fetchAllRows(logQueryFn).catch((e) => { console.warn('logQuery error:', e.message); return []; }) : Promise.resolve([]),
+      fetchAllRows(leaveQueryFn).catch((e) => { console.warn('leaveQuery error:', e.message); return []; }),
+      !dashboardOnly ? fetchAllRows(() => supabaseAdmin.from('db_attendance_corrections').select('*')).catch(() => []) : Promise.resolve([]),
+      fetchAllRows(() => {
+        let q = supabaseAdmin.from('db_schedule_overrides').select('*');
+        if (dashboardOnly) q = q.eq('override_date', todayStr);
+        return q;
+      }).catch(() => []),
+      fetchAllRows(() => supabaseAdmin.from('db_attendance_log_adjustments').select('*')).catch(() => []),
     ]);
 
     const employees = (employeesData || []).map((e) => ({
