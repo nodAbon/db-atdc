@@ -3,6 +3,7 @@ import {
   CalendarDays,
   Clock,
   Link as LinkIcon,
+  Users,
   LogOut,
   Sun,
   Moon,
@@ -39,6 +40,13 @@ export const SIDEBAR_ITEMS = [
     icon: LinkIcon,
     iconStyle: { color: 'var(--purple)' },
     category: '근태 관리',
+  },
+  {
+    href: '/employees',
+    label: '직원 관리',
+    icon: Users,
+    iconStyle: { color: '#06b6d4' },
+    category: '시스템 관리',
   },
 ];
 
