@@ -1,45 +1,39 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useEffect, useMemo, useState, useCallback, Suspense } from 'react';
+import { RefreshCw, RotateCcw, Save, Search, Clock, CheckCircle } from 'lucide-react';
 import AppSidebar from '../../components/AppSidebar';
-import { usePersistentTheme } from '../../lib/usePersistentTheme';
 import { formatClockTime } from '../../lib/clock';
-import {
-  Clock,
-  Calendar,
-  Building2,
-  User,
-  CheckCircle,
-  XCircle,
-  AlertTriangle,
-  RotateCcw,
-  Edit3,
-} from 'lucide-react';
+import { usePersistentTheme } from '../../lib/usePersistentTheme';
+import { getKstDateKey, shiftKstDateKey } from '../../lib/kstDate';
 import { formatTimeString } from '../../lib/dashboardUtils';
 
-export default function AttendanceRecordsPage() {
+const buildDraft = (log) => ({
+  workDate: log.workDate || log.rawWorkDate || '',
+  adjustedRole: log.adjustedRole || '',
+  note: log.adjustmentNote || '',
+});
+
+function AttendanceRecordsContent() {
   const [theme, setTheme] = usePersistentTheme('light');
   const [time, setTime] = useState('');
-  const [date, setDate] = useState(() => {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  });
-  const [dept, setDept] = useState('ALL');
-  const [selectedEmpNo, setSelectedEmpNo] = useState('');
+
+  const todayStr = getKstDateKey(new Date());
+  const [fromDate, setFromDate] = useState(() => `${todayStr.slice(0, 7)}-01`);
+  const [toDate, setToDate] = useState(todayStr);
 
   const [employees, setEmployees] = useState([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedEmpNo, setSelectedEmpNo] = useState('');
   const [logs, setLogs] = useState([]);
-  const [adjustments, setAdjustments] = useState([]);
-  const [corrections, setCorrections] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const [drafts, setDrafts] = useState({});
+  const [loadingEmployees, setLoadingEmployees] = useState(false);
+  const [loadingLogs, setLoadingLogs] = useState(false);
+  const [savingKey, setSavingKey] = useState(null);
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
 
-  // 시간 보정 모달 상태
-  const [modalOpen, setModalOpen] = useState(false);
-  const [modalTargetEmp, setModalTargetEmp] = useState(null);
-  const [correctTimeVal, setCorrectTimeVal] = useState('18:00');
-  const [correctReason, setCorrectReason] = useState('');
-
-  // 시계 타이머
+  // 시계
   useEffect(() => {
     const tick = () => setTime(formatClockTime(new Date()));
     tick();
@@ -47,358 +41,401 @@ export default function AttendanceRecordsPage() {
     return () => clearInterval(timer);
   }, []);
 
-  // 데이터 로드
-  const loadData = useCallback(async () => {
-    setLoading(true);
+  // 직원 목록 로드
+  const loadEmployees = useCallback(async () => {
+    setLoadingEmployees(true);
+    setError('');
     try {
-      const res = await fetch(`/api/attendance-records?date=${date}&dept=${dept}&emp_no=${selectedEmpNo}`);
-      const data = await res.json();
-      if (data.employees) setEmployees(data.employees);
-      if (data.logs) setLogs(data.logs);
-      if (data.adjustments) setAdjustments(data.adjustments);
-      if (data.corrections) setCorrections(data.corrections);
-    } catch (e) {
-      console.error(e);
+      const res = await fetch(`/api/attendance-records?from=${fromDate}&to=${toDate}`);
+      const json = await res.json();
+      if (json.success) {
+        setEmployees(json.employees || []);
+        if (!selectedEmpNo && json.employees?.length > 0) {
+          setSelectedEmpNo(json.employees[0].emp_no);
+        }
+      }
+    } catch (err) {
+      setError(err.message || '직원 목록을 불러오지 못했습니다.');
     } finally {
-      setLoading(false);
+      setLoadingEmployees(false);
     }
-  }, [date, dept, selectedEmpNo]);
+  }, [fromDate, toDate, selectedEmpNo]);
+
+  // 선택된 직원의 로그 로드
+  const loadLogs = useCallback(async () => {
+    if (!selectedEmpNo) {
+      setLogs([]);
+      setDrafts({});
+      return;
+    }
+    setLoadingLogs(true);
+    setError('');
+    setMessage('');
+    try {
+      const res = await fetch(`/api/attendance-records?from=${fromDate}&to=${toDate}&empNo=${selectedEmpNo}`);
+      const json = await res.json();
+      if (json.success) {
+        setLogs(json.logs || []);
+        const nextDrafts = {};
+        (json.logs || []).forEach((log) => {
+          nextDrafts[String(log.a_time)] = buildDraft(log);
+        });
+        setDrafts(nextDrafts);
+      }
+    } catch (err) {
+      setError(err.message || '출입기록을 불러오지 못했습니다.');
+    } finally {
+      setLoadingLogs(false);
+    }
+  }, [fromDate, toDate, selectedEmpNo]);
 
   useEffect(() => {
-    loadData();
-  }, [loadData]);
+    loadEmployees();
+  }, [loadEmployees]);
 
-  // 역할 조정 처리
-  const handleRoleAdjust = async (log, role) => {
+  useEffect(() => {
+    loadLogs();
+  }, [loadLogs]);
+
+  const filteredEmployees = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return (employees || []).filter((e) => {
+      if (!q) return true;
+      return `${e.name} ${e.emp_no} ${e.dept || ''}`.toLowerCase().includes(q);
+    });
+  }, [employees, searchQuery]);
+
+  const selectedEmployee = useMemo(
+    () => employees.find((e) => String(e.emp_no) === String(selectedEmpNo)) || null,
+    [employees, selectedEmpNo]
+  );
+
+  const summary = useMemo(() => {
+    return {
+      total: logs.length,
+      adjusted: logs.filter((log) => log.isAdjusted).length,
+      checkin: logs.filter((log) => log.adjustedRole === '출근').length,
+      checkout: logs.filter((log) => log.adjustedRole === '퇴근').length,
+      ignored: logs.filter((log) => log.adjustedRole === '무시하기').length,
+    };
+  }, [logs]);
+
+  const updateDraft = (aTime, field, value) => {
+    setDrafts((prev) => ({
+      ...prev,
+      [aTime]: {
+        ...prev[aTime],
+        [field]: value,
+      },
+    }));
+  };
+
+  const handleSave = async (log) => {
+    const draft = drafts[String(log.a_time)] || buildDraft(log);
+    setSavingKey(String(log.a_time));
+    setError('');
+    setMessage('');
     try {
-      const res = await fetch('/api/attendance-records/adjust', {
+      const res = await fetch('/api/attendance-records', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          action: 'adjust_role',
-          attendanceId: log.id,
-          empNo: log.emp_no,
-          workDate: date,
-          role,
+          empNo: selectedEmpNo,
+          a_time: log.a_time,
+          workDate: draft.workDate || log.rawWorkDate,
+          adjustedRole: draft.adjustedRole,
+          note: draft.note,
         }),
       });
-      if (res.ok) {
-        loadData();
-      }
-    } catch (e) {
-      console.error(e);
+      const json = await res.json();
+      if (!json.success) throw new Error(json.error || '저장 실패');
+      setMessage('출입기록이 성공적으로 저장되었습니다.');
+      loadLogs();
+    } catch (err) {
+      setError(err.message || '저장 중 오류가 발생했습니다.');
+    } finally {
+      setSavingKey(null);
     }
   };
 
-  // 수동 시간 보정 저장
-  const handleSaveCorrection = async () => {
-    if (!modalTargetEmp || !correctTimeVal) return;
+  const handleReset = async (log) => {
+    setSavingKey(String(log.a_time));
+    setError('');
+    setMessage('');
     try {
-      const [h, m] = correctTimeVal.split(':');
-      const isoTime = `${date}T${h.padStart(2, '0')}:${m.padStart(2, '0')}:00+09:00`;
-
-      const res = await fetch('/api/attendance-records/adjust', {
+      const res = await fetch('/api/attendance-records', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          action: 'correct_time',
-          empNo: modalTargetEmp.emp_no,
-          workDate: date,
-          correctedOutTime: isoTime,
-          reason: correctReason || '관리자 수동 보정',
+          empNo: selectedEmpNo,
+          a_time: log.a_time,
+          adjustedRole: '',
         }),
       });
-      if (res.ok) {
-        setModalOpen(false);
-        setModalTargetEmp(null);
-        setCorrectReason('');
-        loadData();
-      }
-    } catch (e) {
-      console.error(e);
+      const json = await res.json();
+      if (!json.success) throw new Error(json.error || '초기화 실패');
+      setMessage('기록이 기본 상태로 복원되었습니다.');
+      loadLogs();
+    } catch (err) {
+      setError(err.message || '복원 중 오류가 발생했습니다.');
+    } finally {
+      setSavingKey(null);
     }
   };
-
-  // 맵핑 빌드
-  const adjustmentMap = new Map(adjustments.map((a) => [a.attendance_id, a.adjusted_role]));
-  const correctionMap = new Map(corrections.map((c) => [c.emp_no, c]));
 
   return (
-    <div className="app-layout">
-      <AppSidebar
-        theme={theme}
-        toggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-      />
-
-      <div className="main-content">
-        <header className="top-header">
-          <div className="header-left">
-            <h1 className="page-title">출입기록 조회 및 조정</h1>
+    <div className="ga-theme" data-theme={theme}>
+      <AppSidebar activeTab="RECORDS" theme={theme} toggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')} />
+      <main className="main-content" style={{ flexGrow: 1, padding: '24px 32px', overflowY: 'auto' }}>
+        {/* Top bar */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
+          <div>
+            <h1 style={{ fontSize: 24, fontWeight: 800, color: 'var(--text-1)', margin: 0 }}>
+              출입기록 조회 및 조정
+            </h1>
+            <p style={{ marginTop: 4, fontSize: 13, color: 'var(--text-2)' }}>
+              임직원의 캡스 출입로그 원천 데이터를 조회하고 출근/퇴근 역할을 수동으로 조정합니다.
+            </p>
           </div>
-          <div className="header-right">
-            <span className="clock-badge">{time}</span>
+          <div className="db-indicator">
+            <Clock size={16} style={{ color: 'var(--blue)' }} />
+            <span>{time || '--:--:--'}</span>
           </div>
-        </header>
+        </div>
 
-        <div className="page-container">
-          {/* 컨트롤 바 */}
-          <div className="filter-bar">
-            <div className="filter-group">
-              <Calendar size={16} style={{ color: 'var(--text-3)' }} />
+        {/* Date Filter & Summary Chips */}
+        <div className="card" style={{ padding: '16px 20px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-2)' }}>조회 기간:</span>
               <input
                 type="date"
-                className="input"
-                value={date}
-                onChange={(e) => setDate(e.target.value)}
+                value={fromDate}
+                onChange={(e) => setFromDate(e.target.value)}
+                className="form-input"
+                style={{ width: 140, padding: '6px 10px', fontSize: 13 }}
               />
-
-              <Building2 size={16} style={{ color: 'var(--text-3)', marginLeft: 8 }} />
-              <select
-                className="select"
-                value={dept}
-                onChange={(e) => {
-                  setDept(e.target.value);
-                  setSelectedEmpNo('');
-                }}
-              >
-                <option value="ALL">전체 부서</option>
-                {Array.from(new Set(employees.map((e) => e.dept).filter(Boolean))).map((d) => (
-                  <option key={d} value={d}>{d}</option>
-                ))}
-              </select>
-
-              <User size={16} style={{ color: 'var(--text-3)', marginLeft: 8 }} />
-              <select
-                className="select"
-                value={selectedEmpNo}
-                onChange={(e) => setSelectedEmpNo(e.target.value)}
-              >
-                <option value="">전체 직원</option>
-                {employees.map((e) => (
-                  <option key={e.emp_no} value={e.emp_no}>
-                    {e.name} ({e.emp_no})
-                  </option>
-                ))}
-              </select>
+              <span style={{ color: 'var(--text-3)' }}>~</span>
+              <input
+                type="date"
+                value={toDate}
+                onChange={(e) => setToDate(e.target.value)}
+                className="form-input"
+                style={{ width: 140, padding: '6px 10px', fontSize: 13 }}
+              />
+              <button type="button" className="btn btn-secondary" onClick={() => { loadEmployees(); loadLogs(); }}>
+                <RefreshCw size={14} />
+                <span>조회</span>
+              </button>
             </div>
 
-            <button type="button" className="btn btn-secondary" onClick={loadData}>
-              <RotateCcw size={14} className={loading ? 'spin' : ''} />
-              <span>새로고침</span>
-            </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <span className="badge badge-blue">전체 {summary.total}건</span>
+              <span className="badge badge-green">수정됨 {summary.adjusted}건</span>
+              <span className="badge badge-amber">출근 {summary.checkin}건</span>
+              <span className="badge badge-purple">퇴근 {summary.checkout}건</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Main Grid: Left Employee List, Right Logs Table */}
+        <div style={{ display: 'grid', gridTemplateColumns: '280px 1fr', gap: 20, alignItems: 'start' }}>
+          {/* Left Employee List */}
+          <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+            <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>
+              <div style={{ position: 'relative' }}>
+                <Search size={14} style={{ position: 'absolute', left: 10, top: 11, color: 'var(--text-3)' }} />
+                <input
+                  type="text"
+                  placeholder="이름/사번/부서 검색"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="search-input"
+                  style={{ width: '100%', paddingLeft: 30 }}
+                />
+              </div>
+            </div>
+            <div style={{ maxHeight: 620, overflowY: 'auto' }}>
+              {filteredEmployees.length === 0 ? (
+                <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}>
+                  직원이 없습니다.
+                </div>
+              ) : (
+                filteredEmployees.map((emp) => {
+                  const isSelected = String(emp.emp_no) === String(selectedEmpNo);
+                  return (
+                    <button
+                      key={emp.emp_no}
+                      type="button"
+                      onClick={() => setSelectedEmpNo(emp.emp_no)}
+                      style={{
+                        width: '100%',
+                        textAlign: 'left',
+                        padding: '12px 16px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        borderBottom: '1px solid var(--border)',
+                        background: isSelected ? '#EFF6FF' : 'transparent',
+                        borderColor: isSelected ? '#BFDBFE' : 'var(--border)',
+                        cursor: 'pointer',
+                        transition: 'background 0.12s',
+                        borderRadius: 0,
+                      }}
+                    >
+                      <div>
+                        <div style={{ fontSize: 13.5, fontWeight: 700, color: isSelected ? 'var(--blue)' : 'var(--text-1)' }}>
+                          {emp.name}
+                        </div>
+                        <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 2 }}>
+                          {emp.dept} · {emp.emp_no}
+                        </div>
+                      </div>
+                      {isSelected && <CheckCircle size={16} style={{ color: 'var(--blue)' }} />}
+                    </button>
+                  );
+                })
+              )}
+            </div>
           </div>
 
-          {/* 직원별 출입기록 및 조정 패널 */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-            {employees.length === 0 ? (
-              <div className="card" style={{ textAlign: 'center', padding: '48px', color: 'var(--text-3)' }}>
-                해당 조건의 직원 또는 출입기록 데이터가 없습니다.
+          {/* Right Logs Table */}
+          <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+            <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <h3 className="card-title" style={{ fontSize: 16 }}>
+                  {selectedEmployee ? `${selectedEmployee.name} (${selectedEmployee.dept}) 출입기록` : '출입기록'}
+                </h3>
+                <p className="card-subtitle">
+                  {selectedEmployee ? `사번: ${selectedEmployee.emp_no} · 조회기간: ${fromDate} ~ ${toDate}` : '직원을 선택해 주세요.'}
+                </p>
+              </div>
+            </div>
+
+            {loadingLogs ? (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 60, flexDirection: 'column', gap: 10 }}>
+                <RefreshCw size={24} style={{ color: 'var(--blue)', animation: 'spin 1s linear infinite' }} />
+                <span style={{ fontSize: 13, color: 'var(--text-2)' }}>출입기록을 불러오는 중...</span>
+              </div>
+            ) : logs.length === 0 ? (
+              <div style={{ padding: 60, textAlign: 'center', color: 'var(--text-3)', fontSize: 14 }}>
+                해당 기간에 기록된 캡스 태그 내역이 없습니다.
               </div>
             ) : (
-              employees.map((emp) => {
-                const empLogs = logs.filter((l) => l.emp_no === emp.emp_no);
-                const correction = correctionMap.get(emp.emp_no);
+              <div className="table-wrapper" style={{ border: 'none', borderRadius: 0, maxHeight: 600 }}>
+                <table className="table" style={{ tableLayout: 'fixed' }}>
+                  <colgroup>
+                    <col style={{ width: '160px' }} />
+                    <col style={{ width: '120px' }} />
+                    <col style={{ width: '120px' }} />
+                    <col style={{ width: '110px' }} />
+                    <col style={{ width: '140px' }} />
+                    <col style={{ width: '120px' }} />
+                  </colgroup>
+                  <thead>
+                    <tr>
+                      <th>태그 일시</th>
+                      <th>게이트</th>
+                      <th>적용 일자</th>
+                      <th>역할 지정</th>
+                      <th>사유 / 메모</th>
+                      <th style={{ textAlign: 'center' }}>관리</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {logs.map((log) => {
+                      const aTime = String(log.a_time);
+                      const draft = drafts[aTime] || buildDraft(log);
+                      const isSaving = savingKey === aTime;
 
-                return (
-                  <div key={emp.emp_no} className="card">
-                    <div className="card-header">
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                        <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-1)' }}>
-                          {emp.name}
-                        </span>
-                        <span style={{ fontSize: 13, color: 'var(--text-3)', fontFamily: 'var(--mono)' }}>
-                          {emp.emp_no}
-                        </span>
-                        <span className="badge badge-blue">{emp.dept || '부서미지정'}</span>
-                      </div>
-
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                        {correction && (
-                          <span className="badge badge-amber">
-                            수동 보정됨 ({formatTimeString(correction.corrected_out_time)})
-                          </span>
-                        )}
-                        <button
-                          type="button"
-                          className="btn btn-secondary"
-                          style={{ padding: '4px 10px', fontSize: 12 }}
-                          onClick={() => {
-                            setModalTargetEmp(emp);
-                            setModalOpen(true);
-                          }}
-                        >
-                          <Edit3 size={13} />
-                          <span>시간 수동 보정</span>
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* 태그 내역 목록 */}
-                    <div className="table-wrapper">
-                      <table className="custom-table">
-                        <thead>
-                          <tr>
-                            <th>태그 시각</th>
-                            <th>게이트 / 위치</th>
-                            <th>원본 이벤트</th>
-                            <th>지정된 역할</th>
-                            <th style={{ textAlign: 'center' }}>역할 조정</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {empLogs.length === 0 ? (
-                            <tr>
-                              <td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-3)', padding: 18 }}>
-                                이날 기록된 CAPS 태그 기록이 없습니다.
-                              </td>
-                            </tr>
-                          ) : (
-                            empLogs.map((log) => {
-                              const adjustedRole = adjustmentMap.get(log.id);
-
-                              return (
-                                <tr key={log.id}>
-                                  <td style={{ fontFamily: 'var(--mono)', fontWeight: 600 }}>
-                                    {formatTimeString(log.a_time)}
-                                  </td>
-                                  <td style={{ color: 'var(--text-2)' }}>
-                                    {log.gate_name || 'CAPS'}
-                                  </td>
-                                  <td>
-                                    <span className="badge badge-blue">{log.event_type || '출입'}</span>
-                                  </td>
-                                  <td>
-                                    {adjustedRole ? (
-                                      <span className={`badge ${
-                                        adjustedRole === '출근' ? 'badge-green' :
-                                        adjustedRole === '퇴근' ? 'badge-blue' : 'badge-red'
-                                      }`}>
-                                        {adjustedRole} (수정됨)
-                                      </span>
-                                    ) : (
-                                      <span style={{ color: 'var(--text-3)', fontSize: 12 }}>자동 판정</span>
-                                    )}
-                                  </td>
-                                  <td style={{ textAlign: 'center' }}>
-                                    <div style={{ display: 'inline-flex', gap: 6 }}>
-                                      <button
-                                        type="button"
-                                        className="btn btn-secondary"
-                                        style={{ padding: '3px 8px', fontSize: 11 }}
-                                        onClick={() => handleRoleAdjust(log, '출근')}
-                                      >
-                                        출근 지정
-                                      </button>
-                                      <button
-                                        type="button"
-                                        className="btn btn-secondary"
-                                        style={{ padding: '3px 8px', fontSize: 11 }}
-                                        onClick={() => handleRoleAdjust(log, '퇴근')}
-                                      >
-                                        퇴근 지정
-                                      </button>
-                                      <button
-                                        type="button"
-                                        className="btn btn-danger"
-                                        style={{ padding: '3px 8px', fontSize: 11 }}
-                                        onClick={() => handleRoleAdjust(log, '무시하기')}
-                                      >
-                                        무시
-                                      </button>
-                                    </div>
-                                  </td>
-                                </tr>
-                              );
-                            })
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                );
-              })
+                      return (
+                        <tr key={log.a_time || log.id}>
+                          <td>
+                            <div style={{ fontFamily: 'var(--mono)', fontWeight: 700, fontSize: 13 }}>
+                              {log.logTime}
+                            </div>
+                          </td>
+                          <td>
+                            <span style={{ fontSize: 12, color: 'var(--text-2)' }}>
+                              {log.gateName || 'CAPS'}
+                            </span>
+                          </td>
+                          <td>
+                            <input
+                              type="date"
+                              value={draft.workDate || log.rawWorkDate}
+                              onChange={(e) => updateDraft(aTime, 'workDate', e.target.value)}
+                              className="form-input"
+                              style={{ width: '100%', padding: '4px 6px', fontSize: 12 }}
+                            />
+                          </td>
+                          <td>
+                            <select
+                              value={draft.adjustedRole}
+                              onChange={(e) => updateDraft(aTime, 'adjustedRole', e.target.value)}
+                              className="ui-select"
+                              style={{ width: '100%', minWidth: 'auto', minHeight: 32, padding: '4px 8px', fontSize: 12 }}
+                            >
+                              <option value="">자동 판정</option>
+                              <option value="출근">출근 지정</option>
+                              <option value="퇴근">퇴근 지정</option>
+                              <option value="무시하기">무시하기</option>
+                            </select>
+                          </td>
+                          <td>
+                            <input
+                              type="text"
+                              placeholder="조정 사유"
+                              value={draft.note}
+                              onChange={(e) => updateDraft(aTime, 'note', e.target.value)}
+                              className="form-input"
+                              style={{ width: '100%', padding: '4px 8px', fontSize: 12 }}
+                            />
+                          </td>
+                          <td style={{ textAlign: 'center' }}>
+                            <div style={{ display: 'inline-flex', gap: 6 }}>
+                              <button
+                                type="button"
+                                className="btn btn-primary"
+                                style={{ padding: '4px 10px', fontSize: 11.5 }}
+                                onClick={() => handleSave(log)}
+                                disabled={isSaving}
+                              >
+                                <Save size={12} />
+                                <span>{isSaving ? '저장중' : '저장'}</span>
+                              </button>
+                              {log.isAdjusted && (
+                                <button
+                                  type="button"
+                                  className="btn btn-secondary"
+                                  style={{ padding: '4px 8px', fontSize: 11.5 }}
+                                  onClick={() => handleReset(log)}
+                                  disabled={isSaving}
+                                  title="원래 상태로 복원"
+                                >
+                                  <RotateCcw size={12} />
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
         </div>
-      </div>
-
-      {/* 수동 시간 보정 모달 */}
-      {modalOpen && modalTargetEmp && (
-        <div className="modal-backdrop" onClick={() => setModalOpen(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-            <div className="card-header">
-              <div className="card-title">
-                <Edit3 size={18} style={{ color: 'var(--blue)' }} />
-                <span>출퇴근 시간 수동 보정</span>
-              </div>
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 14, margin: '16px 0' }}>
-              <div>
-                <label style={{ fontSize: 12, color: 'var(--text-3)', display: 'block', marginBottom: 4 }}>
-                  대상 직원
-                </label>
-                <div style={{ fontWeight: 600, color: 'var(--text-1)' }}>
-                  {modalTargetEmp.name} ({modalTargetEmp.emp_no}) / {modalTargetEmp.dept}
-                </div>
-              </div>
-
-              <div>
-                <label style={{ fontSize: 12, color: 'var(--text-3)', display: 'block', marginBottom: 4 }}>
-                  보정 기준 날짜
-                </label>
-                <div style={{ fontFamily: 'var(--mono)', color: 'var(--text-1)' }}>
-                  {date}
-                </div>
-              </div>
-
-              <div>
-                <label style={{ fontSize: 12, color: 'var(--text-3)', display: 'block', marginBottom: 4 }}>
-                  보정 퇴근 시간 (HH:mm)
-                </label>
-                <input
-                  type="time"
-                  className="input"
-                  style={{ width: '100%' }}
-                  value={correctTimeVal}
-                  onChange={(e) => setCorrectTimeVal(e.target.value)}
-                />
-              </div>
-
-              <div>
-                <label style={{ fontSize: 12, color: 'var(--text-3)', display: 'block', marginBottom: 4 }}>
-                  보정 사유
-                </label>
-                <input
-                  type="text"
-                  className="input"
-                  style={{ width: '100%' }}
-                  placeholder="예: 외근 후 현지 퇴근, CAPS 카드 미태그 소명"
-                  value={correctReason}
-                  onChange={(e) => setCorrectReason(e.target.value)}
-                />
-              </div>
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 20 }}>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => setModalOpen(false)}
-              >
-                취소
-              </button>
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={handleSaveCorrection}
-              >
-                저장하기
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      </main>
     </div>
+  );
+}
+
+export default function AttendanceRecordsPage() {
+  return (
+    <Suspense fallback={<div className="loading-spinner">화면을 불러오는 중...</div>}>
+      <AttendanceRecordsContent />
+    </Suspense>
   );
 }

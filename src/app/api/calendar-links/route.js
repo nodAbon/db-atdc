@@ -86,3 +86,24 @@ export async function PATCH(request) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
+
+export async function DELETE(request) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const id = searchParams.get('id');
+    if (!id) {
+      return NextResponse.json({ error: 'ID가 필요합니다.' }, { status: 400 });
+    }
+
+    const { error } = await supabaseAdmin
+      .from('db_ical_subscriptions')
+      .delete()
+      .eq('id', id);
+
+    if (error) throw error;
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error('calendar-links DELETE error:', error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}
