@@ -7,8 +7,11 @@ export const normalizeDeptName = (value) => String(value ?? '').trim();
 export const normalizeDeptLoose = (value) => normalizeDeptName(value).replace(/\s+/g, '');
 
 export const matchesDeptFilter = (itemDept, filterDept) => {
-  if (!filterDept || filterDept === 'ALL') return true;
-  return normalizeDeptLoose(itemDept) === normalizeDeptLoose(filterDept);
+  const normFilter = normalizeDeptLoose(filterDept);
+  if (!normFilter || normFilter === 'ALL' || normFilter === '전체' || normFilter === '전체부서' || normFilter === '드림베이' || normFilter === '전체부서보기') {
+    return true;
+  }
+  return normalizeDeptLoose(itemDept) === normFilter;
 };
 
 export const normalizeEmpNoKey = (value) => {
