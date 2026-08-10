@@ -7,33 +7,7 @@ export async function fetchAttendanceLogs(month, { dashboardOnly = false, exclud
     const todayStr = getKstDateKey();
     const todayRaw = todayStr.replace(/-/g, '');
 
-    // 1. 임직원 목록
-    let empQuery = supabaseAdmin
-      .from('db_employees')
-      .select('*')
-      .eq('is_active', true)
-      .order('dept', { ascending: true })
-      .order('name', { ascending: true });
-
-    if (empNo) {
-      empQuery = empQuery.eq('emp_no', empNo);
-    }
-
-    const { data: rawEmployees, error: empError } = await empQuery;
-    if (empError) throw empError;
-
-    const employees = (rawEmployees || []).map((e) => ({
-      emp_no: e.emp_no,
-      name: e.name,
-      dept: e.dept,
-      email: e.email,
-      login_id: e.login_id,
-      company_code: e.company_code || COMPANY_CODE,
-      rank: e.rank || '',
-      position: e.position || '',
-    }));
-
-    // 2. 날짜 범위 결정
+    // 1. 날짜 범위 결정
     let fromTime, toTime, fromDateStr, toDateStr;
     if (dashboardOnly || !month) {
       fromTime = `${todayRaw}000000`;
@@ -51,10 +25,21 @@ export async function fetchAttendanceLogs(month, { dashboardOnly = false, exclud
       toDateStr = `${yearStr}${monthStr.padStart(2, '0')}${String(lastDay).padStart(2, '0')}`;
     }
 
-    // 3. 출입 로그
-    let logs = [];
+    // 2. 쿼리 객체 구성
+    let empQuery = supabaseAdmin
+      .from('db_employees')
+      .select('*')
+      .eq('is_active', true)
+      .order('dept', { ascending: true })
+      .order('name', { ascending: true });
+
+    if (empNo) {
+      empQuery = empQuery.eq('emp_no', empNo);
+    }
+
+    let logQuery = null;
     if (!excludeLogs) {
-      let logQuery = supabaseAdmin
+      logQuery = supabaseAdmin
         .from('db_attendance')
         .select('*')
         .gte('a_time', fromTime)
@@ -64,13 +49,8 @@ export async function fetchAttendanceLogs(month, { dashboardOnly = false, exclud
       if (empNo) {
         logQuery = logQuery.eq('emp_no', empNo);
       }
-
-      const { data: rawLogs, error: logError } = await logQuery;
-      if (logError) throw logError;
-      logs = rawLogs || [];
     }
 
-    // 4. 연차
     let leaveQuery = supabaseAdmin
       .from('db_leaves')
       .select('*')
@@ -81,10 +61,39 @@ export async function fetchAttendanceLogs(month, { dashboardOnly = false, exclud
       leaveQuery = leaveQuery.eq('emp_no', empNo);
     }
 
-    const { data: rawLeaves, error: leaveError } = await leaveQuery;
-    if (leaveError) throw leaveError;
+    // 3. 모든 쿼리를 Promise.all 병렬 실행 (순차 7회 -> 병렬 1회 왕복)
+    const [
+      empRes,
+      logRes,
+      leaveRes,
+      corrRes,
+      overrideRes,
+      adjRes,
+    ] = await Promise.all([
+      empQuery,
+      logQuery || Promise.resolve({ data: [] }),
+      leaveQuery,
+      supabaseAdmin.from('db_attendance_corrections').select('*').catch(() => ({ data: [] })),
+      supabaseAdmin.from('db_schedule_overrides').select('*').catch(() => ({ data: [] })),
+      supabaseAdmin.from('db_attendance_log_adjustments').select('*').catch(() => ({ data: [] })),
+    ]);
 
-    const leaves = (rawLeaves || []).map((l) => ({
+    if (empRes.error) throw empRes.error;
+    if (logRes?.error) throw logRes.error;
+    if (leaveRes.error) throw leaveRes.error;
+
+    const employees = (empRes.data || []).map((e) => ({
+      emp_no: e.emp_no,
+      name: e.name,
+      dept: e.dept,
+      email: e.email,
+      login_id: e.login_id,
+      company_code: e.company_code || COMPANY_CODE,
+      rank: e.rank || '',
+      position: e.position || '',
+    }));
+
+    const leaves = (leaveRes.data || []).map((l) => ({
       empNo: l.emp_no,
       empName: l.emp_name,
       startDate: l.start_date,
@@ -94,18 +103,13 @@ export async function fetchAttendanceLogs(month, { dashboardOnly = false, exclud
       leaveDays: parseFloat(l.leave_days || 1),
     }));
 
-    // 5. 보정 & 일정
-    const { data: corrections } = await supabaseAdmin.from('db_attendance_corrections').select('*');
-    const { data: overrides } = await supabaseAdmin.from('db_schedule_overrides').select('*');
-    const { data: logAdjustments } = await supabaseAdmin.from('db_attendance_log_adjustments').select('*');
-
     return {
       employees,
-      logs,
+      logs: logRes.data || [],
       leaves,
-      corrections: corrections || [],
-      overrides: overrides || [],
-      logAdjustments: logAdjustments || [],
+      corrections: corrRes.data || [],
+      overrides: overrideRes.data || [],
+      logAdjustments: adjRes.data || [],
     };
   } catch (error) {
     console.error('fetchAttendanceLogs error:', error);
@@ -114,6 +118,19 @@ export async function fetchAttendanceLogs(month, { dashboardOnly = false, exclud
 }
 
 export async function fetchEmployeeSchedules() {
-  const { data } = await supabaseAdmin.from('db_employee_schedules').select('*');
-  return data || [];
+  try {
+    const { data, error } = await supabaseAdmin.from('db_employee_schedules').select('*');
+    if (error) {
+      console.warn('fetchEmployeeSchedules warning:', error.message);
+      return [];
+    }
+    return (data || []).map((row) => ({
+      empNo: row.emp_no,
+      scheduleTime: row.schedule_time ? String(row.schedule_time).slice(0, 5) : '09:00',
+      scheduleEndTime: row.schedule_end_time ? String(row.schedule_end_time).slice(0, 5) : '',
+    }));
+  } catch (e) {
+    console.warn('fetchEmployeeSchedules error:', e.message);
+    return [];
+  }
 }

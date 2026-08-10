@@ -6,11 +6,19 @@ export const dynamic = 'force-dynamic';
 export async function GET(request) {
   try {
     const { searchParams } = new URL(request.url);
-    const month = searchParams.get('month') || ''; // YYYY-MM
+    let yearStr = searchParams.get('year') || '';
+    let monthStr = searchParams.get('month') || '';
 
-    const [yearStr, monthStr] = (month || '').split('-');
+    if (monthStr.includes('-')) {
+      const parts = monthStr.split('-');
+      yearStr = parts[0];
+      monthStr = parts[1];
+    }
+
     if (!yearStr || !monthStr) {
-      return NextResponse.json({ error: '올바른 month 파라미터(YYYY-MM)가 필요합니다.' }, { status: 400 });
+      const now = new Date();
+      yearStr = yearStr || String(now.getFullYear());
+      monthStr = monthStr || String(now.getMonth() + 1);
     }
 
     const y = parseInt(yearStr, 10);
