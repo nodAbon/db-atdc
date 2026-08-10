@@ -84,6 +84,13 @@ const CONFIG = {
   daysToSyncAttendance: 30, // 최근 30일 출입로그 동기화
 };
 
+// Supabase 키 유효성 검사 및 안내
+if (!CONFIG.supabase.serviceRoleKey) {
+  console.error('\n❌ [ERROR] Supabase Service Role Key가 설정되지 않았습니다.');
+  console.error('👉 해결 방법: 프로젝트 루트에 .env.local 파일 또는 sync/.env 파일을 생성해 주세요.\n');
+  process.exit(1);
+}
+
 // Supabase Admin 클라이언트 생성
 const supabase = createClient(CONFIG.supabase.url, CONFIG.supabase.serviceRoleKey, {
   auth: { autoRefreshToken: false, persistSession: false },
