@@ -44,7 +44,8 @@ export async function fetchAttendanceLogs(month, { dashboardOnly = false, exclud
         .select('*')
         .gte('a_time', fromTime)
         .lte('a_time', toTime)
-        .order('a_time', { ascending: true });
+        .order('a_time', { ascending: true })
+        .limit(50000);
 
       if (empNo) {
         logQuery = logQuery.eq('emp_no', empNo);
@@ -55,7 +56,8 @@ export async function fetchAttendanceLogs(month, { dashboardOnly = false, exclud
       .from('db_leaves')
       .select('*')
       .lte('start_date', toDateStr)
-      .gte('end_date', fromDateStr);
+      .gte('end_date', fromDateStr)
+      .limit(10000);
 
     if (empNo) {
       leaveQuery = leaveQuery.eq('emp_no', empNo);
@@ -70,12 +72,12 @@ export async function fetchAttendanceLogs(month, { dashboardOnly = false, exclud
       overrideRes,
       adjRes,
     ] = await Promise.all([
-      empQuery,
+      empQuery.limit(500),
       logQuery || Promise.resolve({ data: [] }),
       leaveQuery,
-      supabaseAdmin.from('db_attendance_corrections').select('*'),
-      supabaseAdmin.from('db_schedule_overrides').select('*'),
-      supabaseAdmin.from('db_attendance_log_adjustments').select('*'),
+      supabaseAdmin.from('db_attendance_corrections').select('*').limit(5000),
+      supabaseAdmin.from('db_schedule_overrides').select('*').limit(5000),
+      supabaseAdmin.from('db_attendance_log_adjustments').select('*').limit(5000),
     ]);
 
     if (empRes.error) throw empRes.error;
