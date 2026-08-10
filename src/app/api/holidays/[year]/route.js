@@ -1,0 +1,138 @@
+import { NextResponse } from 'next/server';
+import Holidays from 'date-holidays';
+
+export const dynamic = 'force-dynamic';
+
+const HOLIDAY_API_URL = 'https://apis.data.go.kr/B090041/openapi/service/SpcdeInfoService/getRestDeInfo';
+
+const getServiceKey = () =>
+  process.env.HOLIDAY_API_SERVICE_KEY ||
+  process.env.DATA_GO_KR_HOLIDAY_SERVICE_KEY ||
+  process.env.DATA_GO_KR_SERVICE_KEY ||
+  process.env.NEXT_PUBLIC_HOLIDAY_API_SERVICE_KEY ||
+  '';
+
+const normalizeServiceKey = (value) => {
+  const key = String(value || '').trim();
+  if (!key) return '';
+  if (/%[0-9A-Fa-f]{2}/.test(key)) return key;
+  return encodeURIComponent(key);
+};
+
+const normalizeDateKey = (locdate) => {
+  const text = String(locdate || '').trim();
+  if (!text) return '';
+  const digits = text.replace(/\D/g, '');
+  if (digits.length !== 8) return '';
+  return `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6, 8)}`;
+};
+
+const normalizeItemList = (items) => {
+  if (!items) return [];
+  return Array.isArray(items) ? items : [items];
+};
+
+const buildFallbackHolidayMap = (year) => {
+  const hd = new Holidays('KR');
+  const map = {};
+  const items = normalizeItemList(hd.getHolidays(year));
+  items.forEach((item) => {
+    const dateKey = normalizeDateKey(item?.date || item?.start);
+    const name = String(item?.name || '').trim();
+    if (!dateKey || !name) return;
+    map[dateKey] = name;
+  });
+  return map;
+};
+
+const extractHolidayMapFromApiResponse = (payload) => {
+  const items =
+    payload?.response?.body?.items?.item ||
+    payload?.response?.body?.items ||
+    payload?.response?.items?.item ||
+    payload?.response?.items ||
+    [];
+
+  const map = {};
+  normalizeItemList(items).forEach((item) => {
+    const isHoliday = String(item?.isHoliday ?? item?.isholiday ?? 'N').toUpperCase();
+    if (isHoliday !== 'Y') return;
+
+    const dateKey = normalizeDateKey(item?.locdate);
+    const name = String(item?.dateName || item?.datename || '').trim();
+    if (!dateKey || !name) return;
+    map[dateKey] = name;
+  });
+
+  return map;
+};
+
+async function fetchHolidayMonth(year, month, serviceKey) {
+  const monthKey = String(month).padStart(2, '0');
+  const query = new URLSearchParams({
+    ServiceKey: serviceKey,
+    solYear: String(year),
+    solMonth: monthKey,
+    _type: 'json',
+    numOfRows: '100',
+    pageNo: '1',
+  });
+
+  const response = await fetch(`${HOLIDAY_API_URL}?${query.toString()}`, {
+    cache: 'no-store',
+  });
+  const json = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(json?.response?.header?.resultMsg || json?.error || '공휴일 API 요청에 실패했습니다.');
+  }
+
+  return extractHolidayMapFromApiResponse(json);
+}
+
+export async function GET(_request, context) {
+  try {
+    const params = await context?.params;
+    const year = Number(params?.year);
+    if (!Number.isFinite(year) || year < 1900) {
+      return NextResponse.json({ error: '유효한 연도를 입력하세요.' }, { status: 400 });
+    }
+
+    const serviceKey = normalizeServiceKey(getServiceKey());
+    let holidays = {};
+    let source = 'fallback';
+
+    if (serviceKey) {
+      const monthResults = await Promise.allSettled(
+        Array.from({ length: 12 }, (_, index) => fetchHolidayMonth(year, index + 1, serviceKey))
+      );
+
+      holidays = monthResults.reduce((acc, result) => {
+        if (result.status !== 'fulfilled' || !result.value) return acc;
+        return { ...acc, ...result.value };
+      }, {});
+      source = 'data.go.kr';
+    }
+
+    if (Object.keys(holidays).length === 0) {
+      holidays = buildFallbackHolidayMap(year);
+      source = serviceKey ? 'data.go.kr+fallback' : 'fallback';
+    }
+
+    return NextResponse.json({
+      success: true,
+      year,
+      source,
+      holidays,
+    }, {
+      headers: {
+        'Cache-Control': 'no-store, max-age=0',
+      },
+    });
+  } catch (error) {
+    console.error('[Holiday API]', error);
+    return NextResponse.json({
+      error: error?.message || '공휴일 정보를 불러오지 못했습니다.',
+    }, { status: 500 });
+  }
+}

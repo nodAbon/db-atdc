@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useId, useState } from 'react';
 import { ChevronLeft, ChevronRight, Search } from 'lucide-react';
 import { shiftMonthKey } from '../lib/kstDate';
 
@@ -14,7 +14,8 @@ export default function MonthSearchPicker({
   placeholder = 'YYYY-MM 검색',
   className = '',
 }) {
-  const listId = useMemo(() => `month-options-${Math.random().toString(36).slice(2, 10)}`, []);
+  const generatedId = useId();
+  const listId = `month-options-${generatedId.replace(/:/g, '')}`;
   const [query, setQuery] = useState(value || '');
 
   useEffect(() => {
