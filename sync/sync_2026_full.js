@@ -81,6 +81,14 @@ function normalizeEmpNo(value) {
   return digits.slice(-8).replace(/^0+/, '') || digits.slice(-8);
 }
 
+function pickFirst(row, keys = []) {
+  for (const k of keys) {
+    const v = String(row?.[k] ?? '').trim();
+    if (v) return v;
+  }
+  return '';
+}
+
 function parseATime(aTime) {
   if (!aTime || String(aTime).length < 14) return null;
   const s = String(aTime);
@@ -173,18 +181,15 @@ async function syncEmployees(conn) {
 
   const [rows] = await conn.execute(`
     SELECT
+      e.*,
       e.I_EMPLOY_NO   AS emp_no,
       e.N_EMPLOY_NAME AS name,
       d.N_DEPT        AS dept,
-      e.I_DEPT        AS dept_code,
-      e.E_MAIL        AS email,
-      e.I_LOGIN_ID    AS login_id,
-      e.I_COMPANY     AS company_code,
-      e.I_POSITION    AS rank_code,
-      e.I_DUTY        AS position_code,
-      COALESCE(e.I_RETIRE_YN, '0') AS retire_yn
+      e.I_RETIRE_YN   AS retire_yn
     FROM hr_employee e
-    LEFT JOIN hr_department d ON d.I_COMPANY = e.I_COMPANY AND d.I_DEPT = e.I_DEPT
+    LEFT JOIN hr_department d ON
+      d.I_COMPANY = e.I_COMPANY
+      AND d.I_DEPT = e.I_DEPT
     WHERE e.I_COMPANY = ?
       AND COALESCE(e.I_RETIRE_YN, '0') <> '1'
     ORDER BY d.N_DEPT, e.N_EMPLOY_NAME
@@ -197,29 +202,33 @@ async function syncEmployees(conn) {
 
   console.log(`✓ MySQL에서 ${rows.length}명의 재직 임직원을 조회했습니다.`);
 
-  const employees = rows.map((r) => ({
-    emp_no: normalizeEmpNo(r.emp_no),
-    name: String(r.name || '').trim(),
-    dept: String(r.dept || '부서미지정').trim(),
-    email: r.email ? String(r.email).trim() : null,
-    login_id: r.login_id ? String(r.login_id).trim() : null,
-    company_code: String(r.company_code || MY_COMPANY_CODE).trim(),
-    rank: String(r.rank_code || '').trim(),
-    position: String(r.position_code || '').trim(),
-    is_active: r.retire_yn !== '1',
-    synced_at: new Date().toISOString(),
-  })).filter((e) => Boolean(e.emp_no && e.name));
+  const batch = rows.map((row) => {
+    const empNo = normalizeEmpNo(row.emp_no);
+    const email = pickFirst(row, ['email', 'EMAIL', 'I_EMAIL', 'N_EMAIL', 'EMAIL_ADDRESS']);
+    const loginId = pickFirst(row, ['login_id', 'LOGIN_ID', 'user_id', 'USER_ID', 'userid']) || (email.includes('@') ? email.split('@')[0] : '');
+
+    return {
+      emp_no: empNo,
+      name: String(row.name || '').trim(),
+      dept: String(row.dept || '').trim() || '소속미지정',
+      email: email && email.includes('@') ? email : null,
+      login_id: loginId || null,
+      company_code: MY_COMPANY_CODE,
+      is_active: true,
+      synced_at: new Date().toISOString(),
+    };
+  }).filter((item) => Boolean(item.emp_no && item.name));
 
   const { error } = await supabase
     .from('db_employees')
-    .upsert(employees, { onConflict: 'emp_no' });
+    .upsert(batch, { onConflict: 'emp_no' });
 
   if (error) {
     throw new Error(`db_employees upsert 실패: ${error.message}`);
   }
 
-  console.log(`✅ db_employees 테이블: ${employees.length}명 동기화 완료!`);
-  return employees.length;
+  console.log(`✅ db_employees 테이블: ${batch.length}명 동기화 완료!`);
+  return batch.length;
 }
 
 async function syncLeaves2026(conn) {
