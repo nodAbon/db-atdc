@@ -7,10 +7,9 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 export const fetchCache = 'force-no-store';
 
-export async function GET(request, context) {
+export async function GET(request) {
   try {
-    const params = await context?.params;
-    const token = String(params?.token || '').trim();
+    const token = request.nextUrl.searchParams.get('token') || '';
     if (!token) {
       return NextResponse.json({ error: '토큰이 필요합니다.' }, { status: 400 });
     }
@@ -35,7 +34,7 @@ export async function GET(request, context) {
       }),
     });
   } catch (error) {
-    console.error('[ICS Token GET]', error);
+    console.error('[ICS Subscriptions Query GET]', error);
     return NextResponse.json({ error: error?.message || '서버 오류가 발생했습니다.' }, { status: 500 });
   }
 }
