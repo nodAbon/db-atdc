@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabaseAdmin';
 import { getKstDateKey, shiftKstDateKey } from '@/lib/kstDate';
-import { normalizeEmpNoKey } from '@/lib/dashboardUtils';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,7 +21,7 @@ const formatAttendanceLogTime = (row = {}) => {
 export async function GET(request) {
   try {
     const { searchParams } = new URL(request.url);
-    const empNo = String(searchParams.get('empNo') || searchParams.get('emp_no') || '').trim();
+    const rawEmpNo = String(searchParams.get('empNo') || searchParams.get('emp_no') || '').trim();
     const today = getKstDateKey(new Date());
     const from = parseDateInput(searchParams.get('from') || searchParams.get('date'), shiftKstDateKey(today, -30));
     const to = parseDateInput(searchParams.get('to') || searchParams.get('date'), today);
@@ -43,59 +42,48 @@ export async function GET(request) {
     const { data: employeeRows, error: empErr } = await empQuery;
     if (empErr) throw empErr;
 
-    if (!empNo) {
-      return NextResponse.json({
-        success: true,
-        employees: employeeRows || [],
-        logs: [],
-        from,
-        to,
-      });
-    }
+    const empMap = new Map();
+    (employeeRows || []).forEach((e) => {
+      empMap.set(String(e.emp_no), e);
+      empMap.set(`1700${e.emp_no}`, e);
+    });
 
-    // 2. 선택된 직원의 기간 내 출입기록 조회
+    // 2. 출입기록 조회 (날짜 범위)
     const fromTime = `${from.replace(/-/g, '')}000000`;
-    const toTime = `${shiftKstDateKey(to, 1).replace(/-/g, '')}060000`; // 익일 새벽까지
+    const toTime = `${shiftKstDateKey(to, 1).replace(/-/g, '')}060000`;
 
-    const empKey = normalizeEmpNoKey(empNo);
-    const { data: rawLogs, error: logErr } = await supabaseAdmin
+    let logQuery = supabaseAdmin
       .from('db_attendance')
       .select('*')
-      .eq('emp_no', empKey)
       .gte('a_time', fromTime)
       .lte('a_time', toTime)
       .order('a_time', { ascending: false });
 
+    // 개별 직원 필터링 (8자리 사번 또는 12자리 sabun 매칭)
+    if (rawEmpNo && rawEmpNo !== 'ALL') {
+      const cleanEmpNo = rawEmpNo.replace(/^1700/, '');
+      const fullSabun = `1700${cleanEmpNo}`;
+      logQuery = logQuery.or(`emp_no.eq.${cleanEmpNo},sabun.eq.${cleanEmpNo},emp_no.eq.${fullSabun},sabun.eq.${fullSabun}`);
+    }
+
+    const { data: rawLogs, error: logErr } = await logQuery.limit(2000);
     if (logErr) throw logErr;
-
-    // 3. 조정 내역 조회
-    const { data: adjustmentRows } = await supabaseAdmin
-      .from('db_attendance_log_adjustments')
-      .select('*')
-      .eq('emp_no', empKey);
-
-    const adjustmentMap = new Map();
-    (adjustmentRows || []).forEach((adj) => {
-      adjustmentMap.set(String(adj.a_time || adj.attendance_id), adj);
-    });
 
     const logs = (rawLogs || []).map((row) => {
       const formattedTime = formatAttendanceLogTime(row);
       const rawWorkDate = formattedTime.split(' ')[0] || from;
-      const adj = adjustmentMap.get(String(row.a_time)) || adjustmentMap.get(String(row.id));
+      const empInfo = empMap.get(String(row.emp_no)) || empMap.get(String(row.sabun));
 
       return {
         id: row.id,
-        empNo: row.emp_no,
-        name: row.name,
+        empNo: row.emp_no || row.sabun?.replace(/^1700/, ''),
+        sabun: row.sabun,
+        name: empInfo?.name || row.name || '-',
+        dept: empInfo?.dept || '-',
         logTime: formattedTime,
         a_time: row.a_time,
         rawWorkDate,
-        workDate: adj?.work_date || rawWorkDate,
-        adjustedRole: adj?.role || '',
-        adjustmentNote: adj?.note || '',
-        isAdjusted: Boolean(adj),
-        gateName: row.e_name || (row.e_group && row.e_node ? `${row.e_group}/${row.e_node}` : '-'),
+        workDate: rawWorkDate,
         source: 'caps',
       };
     });
@@ -106,52 +94,10 @@ export async function GET(request) {
       logs,
       from,
       to,
-      selectedEmpNo: empKey,
+      selectedEmpNo: rawEmpNo,
     });
   } catch (error) {
     console.error('attendance-records GET error:', error);
-    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
-  }
-}
-
-export async function POST(request) {
-  try {
-    const body = await request.json();
-    const { id, a_time, aTime, empNo, emp_no, workDate, adjustedRole, note } = body;
-
-    const targetEmpNo = normalizeEmpNoKey(empNo || emp_no);
-    const targetATime = String(a_time || aTime || '');
-
-    if (!targetEmpNo || !targetATime) {
-      return NextResponse.json({ success: false, error: '사번 및 태그 시각(a_time)이 필요합니다.' }, { status: 400 });
-    }
-
-    if (!adjustedRole) {
-      // 조정 삭제
-      await supabaseAdmin
-        .from('db_attendance_log_adjustments')
-        .delete()
-        .eq('emp_no', targetEmpNo)
-        .eq('a_time', targetATime);
-    } else {
-      // 조정 생성 또는 업데이트
-      const { error } = await supabaseAdmin
-        .from('db_attendance_log_adjustments')
-        .upsert({
-          emp_no: targetEmpNo,
-          a_time: targetATime,
-          work_date: workDate,
-          role: adjustedRole,
-          note: note || null,
-          created_at: new Date().toISOString(),
-        }, { onConflict: 'emp_no,a_time' });
-
-      if (error) throw error;
-    }
-
-    return NextResponse.json({ success: true });
-  } catch (error) {
-    console.error('attendance-records POST error:', error);
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }
 }
