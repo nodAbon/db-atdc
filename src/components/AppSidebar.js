@@ -1,20 +1,69 @@
 'use client';
 
+import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import { SIDEBAR_ITEMS, sidebarActionIcons } from '../lib/sidebarConfig';
-import { LogOut, Sun, Moon, Sparkles } from 'lucide-react';
+import { usePathname, useRouter } from 'next/navigation';
+import { SIDEBAR_ITEMS } from '../lib/sidebarConfig';
+import { LogOut, Sun, Moon } from 'lucide-react';
 
 export default function AppSidebar({
   activeTab = 'DASHBOARD',
   setActiveTab = () => {},
-  profile = { name: '관리자', emp_no: '17000001', dept: '경영지원팀', rank: '책임' },
-  theme = 'dark',
+  profile: propProfile,
+  theme = 'light',
   toggleTheme = () => {},
-  onLogout = () => {},
+  onLogout,
   version = 'v1.0.0',
 }) {
   const pathname = usePathname();
+  const router = useRouter();
+
+  const [localProfile, setLocalProfile] = useState({
+    name: '관리자',
+    emp_no: '',
+    dept: '경영지원팀',
+    rank: '',
+  });
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const name = localStorage.getItem('user-name');
+      const empNo = localStorage.getItem('user-emp-no');
+      const dept = localStorage.getItem('user-team') || localStorage.getItem('user-dept');
+      const rank = localStorage.getItem('user-rank');
+
+      if (name || empNo) {
+        setLocalProfile({
+          name: name || '임직원',
+          emp_no: empNo || '',
+          dept: dept || '부서미지정',
+          rank: rank || '',
+        });
+      }
+    }
+  }, []);
+
+  const profile = propProfile || localProfile;
+
+  const handleLogout = async () => {
+    if (onLogout) {
+      onLogout();
+      return;
+    }
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+    } catch {
+      // ignore
+    }
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('user-name');
+      localStorage.removeItem('user-emp-no');
+      localStorage.removeItem('user-team');
+      localStorage.removeItem('user-rank');
+      localStorage.removeItem('user-is-admin');
+    }
+    window.location.assign('/login');
+  };
 
   return (
     <aside className="sidebar">
@@ -63,11 +112,11 @@ export default function AppSidebar({
       <div className="sidebar-footer">
         <div className="user-profile">
           <div className="user-avatar">
-            {profile.name ? profile.name.slice(0, 1) : 'D'}
+            {profile.name ? profile.name.slice(0, 1) : 'H'}
           </div>
           <div className="user-info">
             <span className="user-name">{profile.name} {profile.rank || ''}</span>
-            <span className="user-role">{profile.dept || '부서미지정'} ({profile.emp_no})</span>
+            <span className="user-role">{profile.dept || '부서미지정'} {profile.emp_no ? `(${profile.emp_no})` : ''}</span>
           </div>
         </div>
 
@@ -85,7 +134,7 @@ export default function AppSidebar({
           <button
             type="button"
             className="sidebar-util-btn"
-            onClick={onLogout}
+            onClick={handleLogout}
             title="로그아웃"
           >
             <LogOut size={15} />
