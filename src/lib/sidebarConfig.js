@@ -28,7 +28,7 @@ export const SIDEBAR_ITEMS = [
   },
   {
     href: '/attendance-records',
-    label: '출입기록 조회 및 조정',
+    label: '출입기록 조회',
     icon: Clock,
     iconStyle: { color: 'var(--amber)' },
     category: '근태 관리',

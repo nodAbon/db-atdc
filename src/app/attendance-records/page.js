@@ -1,18 +1,33 @@
 'use client';
 
 import React, { useEffect, useMemo, useState, useCallback, Suspense } from 'react';
-import { RefreshCw, RotateCcw, Save, Search, Clock, CheckCircle } from 'lucide-react';
+import { RefreshCw, Search, Clock, Calendar, ArrowRight, User, CheckCircle2 } from 'lucide-react';
 import AppSidebar from '../../components/AppSidebar';
 import { formatClockTime } from '../../lib/clock';
 import { usePersistentTheme } from '../../lib/usePersistentTheme';
 import { getKstDateKey, shiftKstDateKey } from '../../lib/kstDate';
-import { formatTimeString } from '../../lib/dashboardUtils';
 
-const buildDraft = (log) => ({
-  workDate: log.workDate || log.rawWorkDate || '',
-  adjustedRole: log.adjustedRole || '',
-  note: log.adjustmentNote || '',
-});
+function formatDisplayDate(dateStr) {
+  if (!dateStr) return '-';
+  const parts = dateStr.split('-');
+  if (parts.length !== 3) return dateStr;
+  const d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+  const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
+  const dayName = dayNames[d.getDay()] || '';
+  return `${parts[0]}년 ${parts[1]}월 ${parts[2]}일 (${dayName})`;
+}
+
+function formatTimeStringOnly(raw) {
+  if (!raw) return '-';
+  const s = String(raw).trim();
+  if (s.length >= 14) {
+    return `${s.substring(8, 10)}:${s.substring(10, 12)}:${s.substring(12, 14)}`;
+  }
+  if (s.includes(' ')) {
+    return s.split(' ')[1] || s;
+  }
+  return s;
+}
 
 function AttendanceRecordsContent() {
   const [theme, setTheme] = usePersistentTheme('light');
@@ -26,12 +41,8 @@ function AttendanceRecordsContent() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedEmpNo, setSelectedEmpNo] = useState('');
   const [logs, setLogs] = useState([]);
-  const [drafts, setDrafts] = useState({});
   const [loadingEmployees, setLoadingEmployees] = useState(false);
   const [loadingLogs, setLoadingLogs] = useState(false);
-  const [savingKey, setSavingKey] = useState(null);
-  const [message, setMessage] = useState('');
-  const [error, setError] = useState('');
 
   // 시계
   useEffect(() => {
@@ -44,7 +55,6 @@ function AttendanceRecordsContent() {
   // 직원 목록 로드
   const loadEmployees = useCallback(async () => {
     setLoadingEmployees(true);
-    setError('');
     try {
       const res = await fetch(`/api/attendance-records?from=${fromDate}&to=${toDate}`);
       const json = await res.json();
@@ -55,7 +65,7 @@ function AttendanceRecordsContent() {
         }
       }
     } catch (err) {
-      setError(err.message || '직원 목록을 불러오지 못했습니다.');
+      console.error(err);
     } finally {
       setLoadingEmployees(false);
     }
@@ -65,25 +75,17 @@ function AttendanceRecordsContent() {
   const loadLogs = useCallback(async () => {
     if (!selectedEmpNo) {
       setLogs([]);
-      setDrafts({});
       return;
     }
     setLoadingLogs(true);
-    setError('');
-    setMessage('');
     try {
       const res = await fetch(`/api/attendance-records?from=${fromDate}&to=${toDate}&empNo=${selectedEmpNo}`);
       const json = await res.json();
       if (json.success) {
         setLogs(json.logs || []);
-        const nextDrafts = {};
-        (json.logs || []).forEach((log) => {
-          nextDrafts[String(log.a_time)] = buildDraft(log);
-        });
-        setDrafts(nextDrafts);
       }
     } catch (err) {
-      setError(err.message || '출입기록을 불러오지 못했습니다.');
+      console.error(err);
     } finally {
       setLoadingLogs(false);
     }
@@ -110,78 +112,69 @@ function AttendanceRecordsContent() {
     [employees, selectedEmpNo]
   );
 
-  const summary = useMemo(() => {
-    return {
-      total: logs.length,
-      adjusted: logs.filter((log) => log.isAdjusted).length,
-      checkin: logs.filter((log) => log.adjustedRole === '출근').length,
-      checkout: logs.filter((log) => log.adjustedRole === '퇴근').length,
-      ignored: logs.filter((log) => log.adjustedRole === '무시하기').length,
-    };
+  // 일자별(workDate)로 로그 그룹화 및 '출근' / '퇴근' / '출입' 메모 판정
+  const groupedLogs = useMemo(() => {
+    const dateMap = new Map();
+
+    // logs를 a_time 오름차순(시간순)으로 정렬
+    const sorted = [...logs].sort((a, b) => String(a.a_time).localeCompare(String(b.a_time)));
+
+    sorted.forEach((log) => {
+      const dateKey = log.rawWorkDate || log.workDate || '기타';
+      if (!dateMap.has(dateKey)) {
+        dateMap.set(dateKey, []);
+      }
+      dateMap.get(dateKey).push(log);
+    });
+
+    // 날짜는 최신순(내림차순)으로 표시
+    const sortedDates = Array.from(dateMap.keys()).sort((a, b) => b.localeCompare(a));
+
+    return sortedDates.map((dateKey) => {
+      const dayLogs = dateMap.get(dateKey);
+      const totalCount = dayLogs.length;
+
+      const annotatedLogs = dayLogs.map((log, idx) => {
+        let tagType = '출입';
+        let memo = '출입 기록';
+        let badgeClass = 'badge badge-gray';
+
+        if (totalCount === 1) {
+          tagType = '출근';
+          memo = '출근 (당일 1회 태그)';
+          badgeClass = 'badge badge-green';
+        } else if (idx === 0) {
+          tagType = '출근';
+          memo = '출근 (첫 출입 기록)';
+          badgeClass = 'badge badge-green';
+        } else if (idx === totalCount - 1) {
+          tagType = '퇴근';
+          memo = '퇴근 (마지막 출입 기록)';
+          badgeClass = 'badge badge-blue';
+        } else {
+          tagType = '출입';
+          memo = `중간 출입 (${idx + 1}번째)`;
+          badgeClass = 'badge badge-gray';
+        }
+
+        return {
+          ...log,
+          timeOnly: formatTimeStringOnly(log.a_time || log.logTime),
+          tagType,
+          memo,
+          badgeClass,
+        };
+      });
+
+      return {
+        dateKey,
+        displayDate: formatDisplayDate(dateKey),
+        logs: annotatedLogs,
+        firstTime: annotatedLogs[0]?.timeOnly || '-',
+        lastTime: annotatedLogs.length > 1 ? annotatedLogs[annotatedLogs.length - 1]?.timeOnly : '-',
+      };
+    });
   }, [logs]);
-
-  const updateDraft = (aTime, field, value) => {
-    setDrafts((prev) => ({
-      ...prev,
-      [aTime]: {
-        ...prev[aTime],
-        [field]: value,
-      },
-    }));
-  };
-
-  const handleSave = async (log) => {
-    const draft = drafts[String(log.a_time)] || buildDraft(log);
-    setSavingKey(String(log.a_time));
-    setError('');
-    setMessage('');
-    try {
-      const res = await fetch('/api/attendance-records', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          empNo: selectedEmpNo,
-          a_time: log.a_time,
-          workDate: draft.workDate || log.rawWorkDate,
-          adjustedRole: draft.adjustedRole,
-          note: draft.note,
-        }),
-      });
-      const json = await res.json();
-      if (!json.success) throw new Error(json.error || '저장 실패');
-      setMessage('출입기록이 성공적으로 저장되었습니다.');
-      loadLogs();
-    } catch (err) {
-      setError(err.message || '저장 중 오류가 발생했습니다.');
-    } finally {
-      setSavingKey(null);
-    }
-  };
-
-  const handleReset = async (log) => {
-    setSavingKey(String(log.a_time));
-    setError('');
-    setMessage('');
-    try {
-      const res = await fetch('/api/attendance-records', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          empNo: selectedEmpNo,
-          a_time: log.a_time,
-          adjustedRole: '',
-        }),
-      });
-      const json = await res.json();
-      if (!json.success) throw new Error(json.error || '초기화 실패');
-      setMessage('기록이 기본 상태로 복원되었습니다.');
-      loadLogs();
-    } catch (err) {
-      setError(err.message || '복원 중 오류가 발생했습니다.');
-    } finally {
-      setSavingKey(null);
-    }
-  };
 
   return (
     <div className="ga-theme" data-theme={theme}>
@@ -191,19 +184,19 @@ function AttendanceRecordsContent() {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
           <div>
             <h1 style={{ fontSize: 24, fontWeight: 800, color: 'var(--text-1)', margin: 0 }}>
-              출입기록 조회 및 조정
+              출입기록 조회
             </h1>
             <p style={{ marginTop: 4, fontSize: 13, color: 'var(--text-2)' }}>
-              임직원의 캡스 출입로그 원천 데이터를 조회하고 출근/퇴근 역할을 수동으로 조정합니다.
+              임직원의 캡스 출입 시간을 일자별로 조회합니다. 당일 첫 출입은 출근, 마지막 출입은 퇴근으로 표시됩니다.
             </p>
           </div>
           <div className="db-indicator">
-            <Clock size={16} style={{ color: 'var(--blue)' }} />
+            <Clock size={16} style={{ color: 'var(--amber)' }} />
             <span>{time || '--:--:--'}</span>
           </div>
         </div>
 
-        {/* Date Filter & Summary Chips */}
+        {/* Date Filter & Search Bar */}
         <div className="card" style={{ padding: '16px 20px' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 14 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -229,16 +222,18 @@ function AttendanceRecordsContent() {
               </button>
             </div>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-              <span className="badge badge-blue">전체 {summary.total}건</span>
-              <span className="badge badge-green">수정됨 {summary.adjusted}건</span>
-              <span className="badge badge-amber">출근 {summary.checkin}건</span>
-              <span className="badge badge-purple">퇴근 {summary.checkout}건</span>
-            </div>
+            {selectedEmployee && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-1)' }}>
+                  {selectedEmployee.name} ({selectedEmployee.dept})
+                </span>
+                <span className="badge badge-amber">총 {logs.length}건 기록</span>
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Main Grid: Left Employee List, Right Logs Table */}
+        {/* Main 2-Column Grid */}
         <div style={{ display: 'grid', gridTemplateColumns: '280px 1fr', gap: 20, alignItems: 'start' }}>
           {/* Left Employee List */}
           <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
@@ -255,7 +250,7 @@ function AttendanceRecordsContent() {
                 />
               </div>
             </div>
-            <div style={{ maxHeight: 620, overflowY: 'auto' }}>
+            <div style={{ maxHeight: 650, overflowY: 'auto' }}>
               {filteredEmployees.length === 0 ? (
                 <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}>
                   직원이 없습니다.
@@ -276,8 +271,8 @@ function AttendanceRecordsContent() {
                         alignItems: 'center',
                         justifyContent: 'space-between',
                         borderBottom: '1px solid var(--border)',
-                        background: isSelected ? '#EFF6FF' : 'transparent',
-                        borderColor: isSelected ? '#BFDBFE' : 'var(--border)',
+                        background: isSelected ? 'var(--bg-overlay-md)' : 'transparent',
+                        borderColor: isSelected ? 'var(--border-hover)' : 'var(--border)',
                         cursor: 'pointer',
                         transition: 'background 0.12s',
                         borderRadius: 0,
@@ -291,7 +286,7 @@ function AttendanceRecordsContent() {
                           {emp.dept} · {emp.emp_no}
                         </div>
                       </div>
-                      {isSelected && <CheckCircle size={16} style={{ color: 'var(--blue)' }} />}
+                      {isSelected && <CheckCircle2 size={16} style={{ color: 'var(--blue)' }} />}
                     </button>
                   );
                 })
@@ -299,15 +294,15 @@ function AttendanceRecordsContent() {
             </div>
           </div>
 
-          {/* Right Logs Table */}
+          {/* Right Logs Timeline / Table View */}
           <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
             <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
                 <h3 className="card-title" style={{ fontSize: 16 }}>
-                  {selectedEmployee ? `${selectedEmployee.name} (${selectedEmployee.dept}) 출입기록` : '출입기록'}
+                  {selectedEmployee ? `${selectedEmployee.name} (${selectedEmployee.dept}) 출입 기록 내역` : '출입 기록 내역'}
                 </h3>
                 <p className="card-subtitle">
-                  {selectedEmployee ? `사번: ${selectedEmployee.emp_no} · 조회기간: ${fromDate} ~ ${toDate}` : '직원을 선택해 주세요.'}
+                  {selectedEmployee ? `사번: ${selectedEmployee.emp_no} · ${fromDate} ~ ${toDate}` : '직원을 선택해 주세요.'}
                 </p>
               </div>
             </div>
@@ -317,112 +312,98 @@ function AttendanceRecordsContent() {
                 <RefreshCw size={24} style={{ color: 'var(--blue)', animation: 'spin 1s linear infinite' }} />
                 <span style={{ fontSize: 13, color: 'var(--text-2)' }}>출입기록을 불러오는 중...</span>
               </div>
-            ) : logs.length === 0 ? (
+            ) : groupedLogs.length === 0 ? (
               <div style={{ padding: 60, textAlign: 'center', color: 'var(--text-3)', fontSize: 14 }}>
-                해당 기간에 기록된 캡스 태그 내역이 없습니다.
+                해당 기간에 기록된 캡스 출입 기록이 없습니다.
               </div>
             ) : (
-              <div className="table-wrapper" style={{ border: 'none', borderRadius: 0, maxHeight: 600 }}>
-                <table className="table" style={{ tableLayout: 'fixed' }}>
-                  <colgroup>
-                    <col style={{ width: '160px' }} />
-                    <col style={{ width: '120px' }} />
-                    <col style={{ width: '120px' }} />
-                    <col style={{ width: '110px' }} />
-                    <col style={{ width: '140px' }} />
-                    <col style={{ width: '120px' }} />
-                  </colgroup>
-                  <thead>
-                    <tr>
-                      <th>태그 일시</th>
-                      <th>게이트</th>
-                      <th>적용 일자</th>
-                      <th>역할 지정</th>
-                      <th>사유 / 메모</th>
-                      <th style={{ textAlign: 'center' }}>관리</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {logs.map((log) => {
-                      const aTime = String(log.a_time);
-                      const draft = drafts[aTime] || buildDraft(log);
-                      const isSaving = savingKey === aTime;
+              <div style={{ maxHeight: 650, overflowY: 'auto', padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+                {groupedLogs.map((group) => (
+                  <div
+                    key={group.dateKey}
+                    style={{
+                      border: '1px solid var(--border)',
+                      borderRadius: 12,
+                      overflow: 'hidden',
+                      background: 'var(--bg-card)',
+                    }}
+                  >
+                    {/* 날짜 헤더 요약 바 */}
+                    <div
+                      style={{
+                        padding: '10px 16px',
+                        background: 'var(--bg-overlay-sm)',
+                        borderBottom: '1px solid var(--border)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        flexWrap: 'wrap',
+                        gap: 10,
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <Calendar size={15} style={{ color: 'var(--blue)' }} />
+                        <span style={{ fontSize: 14, fontWeight: 800, color: 'var(--text-1)' }}>
+                          {group.displayDate}
+                        </span>
+                      </div>
 
-                      return (
-                        <tr key={log.a_time || log.id}>
-                          <td>
-                            <div style={{ fontFamily: 'var(--mono)', fontWeight: 700, fontSize: 13 }}>
-                              {log.logTime}
-                            </div>
-                          </td>
-                          <td>
-                            <span style={{ fontSize: 12, color: 'var(--text-2)' }}>
-                              {log.gateName || 'CAPS'}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 12 }}>
+                        <span>
+                          <strong style={{ color: 'var(--text-3)' }}>출근: </strong>
+                          <span style={{ fontFamily: 'var(--mono)', fontWeight: 700, color: 'var(--green)' }}>
+                            {group.firstTime}
+                          </span>
+                        </span>
+                        {group.lastTime !== '-' && (
+                          <span>
+                            <strong style={{ color: 'var(--text-3)' }}>퇴근: </strong>
+                            <span style={{ fontFamily: 'var(--mono)', fontWeight: 700, color: 'var(--blue)' }}>
+                              {group.lastTime}
                             </span>
-                          </td>
-                          <td>
-                            <input
-                              type="date"
-                              value={draft.workDate || log.rawWorkDate}
-                              onChange={(e) => updateDraft(aTime, 'workDate', e.target.value)}
-                              className="form-input"
-                              style={{ width: '100%', padding: '4px 6px', fontSize: 12 }}
-                            />
-                          </td>
-                          <td>
-                            <select
-                              value={draft.adjustedRole}
-                              onChange={(e) => updateDraft(aTime, 'adjustedRole', e.target.value)}
-                              className="ui-select"
-                              style={{ width: '100%', minWidth: 'auto', minHeight: 32, padding: '4px 8px', fontSize: 12 }}
-                            >
-                              <option value="">자동 판정</option>
-                              <option value="출근">출근 지정</option>
-                              <option value="퇴근">퇴근 지정</option>
-                              <option value="무시하기">무시하기</option>
-                            </select>
-                          </td>
-                          <td>
-                            <input
-                              type="text"
-                              placeholder="조정 사유"
-                              value={draft.note}
-                              onChange={(e) => updateDraft(aTime, 'note', e.target.value)}
-                              className="form-input"
-                              style={{ width: '100%', padding: '4px 8px', fontSize: 12 }}
-                            />
-                          </td>
-                          <td style={{ textAlign: 'center' }}>
-                            <div style={{ display: 'inline-flex', gap: 6 }}>
-                              <button
-                                type="button"
-                                className="btn btn-primary"
-                                style={{ padding: '4px 10px', fontSize: 11.5 }}
-                                onClick={() => handleSave(log)}
-                                disabled={isSaving}
-                              >
-                                <Save size={12} />
-                                <span>{isSaving ? '저장중' : '저장'}</span>
-                              </button>
-                              {log.isAdjusted && (
-                                <button
-                                  type="button"
-                                  className="btn btn-secondary"
-                                  style={{ padding: '4px 8px', fontSize: 11.5 }}
-                                  onClick={() => handleReset(log)}
-                                  disabled={isSaving}
-                                  title="원래 상태로 복원"
-                                >
-                                  <RotateCcw size={12} />
-                                </button>
-                              )}
-                            </div>
-                          </td>
+                          </span>
+                        )}
+                        <span className="badge badge-gray">{group.logs.length}회 출입</span>
+                      </div>
+                    </div>
+
+                    {/* 출입 내역 테이블 */}
+                    <table className="table" style={{ margin: 0 }}>
+                      <thead>
+                        <tr>
+                          <th style={{ width: '80px', textAlign: 'center' }}>순번</th>
+                          <th style={{ width: '180px' }}>출입 일시</th>
+                          <th style={{ width: '140px' }}>구분</th>
+                          <th>메모</th>
                         </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+                      </thead>
+                      <tbody>
+                        {group.logs.map((log, idx) => (
+                          <tr key={log.id || log.a_time || idx}>
+                            <td style={{ textAlign: 'center', color: 'var(--text-3)', fontFamily: 'var(--mono)', fontSize: 12 }}>
+                              {idx + 1}
+                            </td>
+                            <td>
+                              <div style={{ fontFamily: 'var(--mono)', fontWeight: 700, fontSize: 13.5, color: 'var(--text-1)' }}>
+                                {log.timeOnly}
+                              </div>
+                            </td>
+                            <td>
+                              <span className={log.badgeClass}>
+                                {log.tagType}
+                              </span>
+                            </td>
+                            <td>
+                              <span style={{ fontSize: 12.5, color: 'var(--text-2)' }}>
+                                {log.memo}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ))}
               </div>
             )}
           </div>
