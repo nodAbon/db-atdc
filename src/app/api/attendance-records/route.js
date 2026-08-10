@@ -4,6 +4,30 @@ import { getKstDateKey, shiftKstDateKey } from '@/lib/kstDate';
 
 export const dynamic = 'force-dynamic';
 
+async function fetchAllRows(buildQueryFn, pageSize = 1000) {
+  let allRows = [];
+  let from = 0;
+  let hasMore = true;
+
+  while (hasMore) {
+    const to = from + pageSize - 1;
+    const query = buildQueryFn().range(from, to);
+    const { data, error } = await query;
+
+    if (error) throw error;
+    if (!data || data.length === 0) break;
+
+    allRows.push(...data);
+    if (data.length < pageSize) {
+      hasMore = false;
+    } else {
+      from += pageSize;
+    }
+  }
+
+  return allRows;
+}
+
 const parseDateInput = (value, fallback) => {
   const text = String(value || '').trim();
   if (!text) return fallback;
@@ -30,77 +54,74 @@ export async function GET(request) {
     const fromTime = `${from.replace(/-/g, '')}000000`;
     const toTime = `${shiftKstDateKey(to, 1).replace(/-/g, '')}060000`;
 
-    // 1. 직원 목록 쿼리 준비
-    let empQuery = supabaseAdmin
-      .from('db_employees')
-      .select('emp_no, name, dept, is_active')
-      .eq('is_active', true)
-      .order('dept', { ascending: true })
-      .order('name', { ascending: true });
+    // 1. 직원 목록 쿼리 빌더
+    const buildEmpQuery = () => {
+      let q = supabaseAdmin
+        .from('db_employees')
+        .select('emp_no, name, dept, is_active')
+        .eq('is_active', true)
+        .order('dept', { ascending: true })
+        .order('name', { ascending: true });
 
-    if (dept && dept !== 'ALL') {
-      empQuery = empQuery.eq('dept', dept);
-    }
+      if (dept && dept !== 'ALL') {
+        q = q.eq('dept', dept);
+      }
+      return q;
+    };
 
-    // 2. 출입기록 쿼리 준비
-    let logQuery = supabaseAdmin
-      .from('db_attendance')
-      .select('id, emp_no, a_time, log_time, gate_name, sabun')
-      .gte('a_time', fromTime)
-      .lte('a_time', toTime)
-      .order('a_time', { ascending: false })
-      .limit(20000);
+    // 2. 출입기록 쿼리 빌더
+    const buildLogQuery = () => {
+      let q = supabaseAdmin
+        .from('db_attendance')
+        .select('id, emp_no, a_time, log_time, gate_name, sabun')
+        .gte('a_time', fromTime)
+        .lte('a_time', toTime)
+        .order('a_time', { ascending: false });
 
-    if (rawEmpNo && rawEmpNo !== 'ALL') {
-      const cleanEmpNo = rawEmpNo.replace(/^1700/, '');
-      const fullSabun = `1700${cleanEmpNo}`;
-      logQuery = logQuery.or(`emp_no.eq.${cleanEmpNo},sabun.eq.${cleanEmpNo},emp_no.eq.${fullSabun},sabun.eq.${fullSabun}`);
-    }
+      if (rawEmpNo && rawEmpNo !== 'ALL') {
+        const cleanEmpNo = rawEmpNo.replace(/^1700/, '');
+        const fullSabun = `1700${cleanEmpNo}`;
+        q = q.or(`emp_no.eq.${cleanEmpNo},sabun.eq.${cleanEmpNo},emp_no.eq.${fullSabun},sabun.eq.${fullSabun}`);
+      }
+      return q;
+    };
 
-    // 병렬 실행으로 지연 시간 반토막 단축!
-    const [empRes, logRes] = await Promise.all([
-      empQuery,
-      logQuery.limit(2000),
+    // 병렬 전수 페칭
+    const [employees, rawLogs] = await Promise.all([
+      fetchAllRows(buildEmpQuery),
+      fetchAllRows(buildLogQuery),
     ]);
 
-    if (empRes.error) throw empRes.error;
-    if (logRes.error) throw logRes.error;
-
-    const employeeRows = empRes.data || [];
-    const rawLogs = logRes.data || [];
-
     const empMap = new Map();
-    employeeRows.forEach((e) => {
-      empMap.set(String(e.emp_no), e);
-      empMap.set(`1700${e.emp_no}`, e);
+    (employees || []).forEach((emp) => {
+      empMap.set(emp.emp_no, emp);
+      empMap.set(`1700${emp.emp_no}`, emp);
     });
 
-    const logs = rawLogs.map((row) => {
-      const formattedTime = formatAttendanceLogTime(row);
-      const rawWorkDate = formattedTime.split(' ')[0] || from;
-      const empInfo = empMap.get(String(row.emp_no)) || empMap.get(String(row.sabun));
+    const records = (rawLogs || []).map((row) => {
+      const emp = empMap.get(row.emp_no) || empMap.get(row.sabun) || {};
+      const empNo = emp.emp_no || row.emp_no || (row.sabun ? String(row.sabun).replace(/^1700/, '') : '-');
+      const name = emp.name || '-';
+      const department = emp.dept || '부서미지정';
+      const eventTime = formatAttendanceLogTime(row);
+      const gateName = row.gate_name || '출입';
 
       return {
         id: row.id,
-        empNo: row.emp_no || row.sabun?.replace(/^1700/, ''),
-        sabun: row.sabun,
-        name: empInfo?.name || '-',
-        dept: empInfo?.dept || '-',
-        logTime: formattedTime,
-        a_time: row.a_time,
-        rawWorkDate,
-        workDate: rawWorkDate,
+        emp_no: empNo,
+        name,
+        dept: department,
+        event_time: eventTime,
+        gate_name: gateName,
         source: 'caps',
+        a_time: row.a_time,
       };
     });
 
     return NextResponse.json({
-      success: true,
-      employees: employeeRows,
-      logs,
-      from,
-      to,
-      selectedEmpNo: rawEmpNo,
+      records,
+      totalCount: records.length,
+      employees: employees || [],
     }, {
       headers: {
         'Cache-Control': 'public, s-maxage=5, stale-while-revalidate=30',

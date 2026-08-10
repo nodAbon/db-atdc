@@ -2,6 +2,34 @@ import { supabaseAdmin } from './supabaseAdmin';
 import { COMPANY_CODE, normalizeEmpNoKey } from './dashboardUtils';
 import { getKstDateKey } from './kstDate';
 
+/**
+ * Supabase PostgREST의 1,000건 기본 제한을 뚫고
+ * 조건에 맞는 전체 데이터(수만 건)를 1,000건 단위로 전수 페칭하는 헬퍼 함수
+ */
+async function fetchAllRows(buildQueryFn, pageSize = 1000) {
+  let allRows = [];
+  let from = 0;
+  let hasMore = true;
+
+  while (hasMore) {
+    const to = from + pageSize - 1;
+    const query = buildQueryFn().range(from, to);
+    const { data, error } = await query;
+
+    if (error) throw error;
+    if (!data || data.length === 0) break;
+
+    allRows.push(...data);
+    if (data.length < pageSize) {
+      hasMore = false;
+    } else {
+      from += pageSize;
+    }
+  }
+
+  return allRows;
+}
+
 export async function fetchAttendanceLogs(month, { dashboardOnly = false, excludeLogs = false, empNo = null } = {}) {
   try {
     const todayStr = getKstDateKey();
@@ -25,66 +53,57 @@ export async function fetchAttendanceLogs(month, { dashboardOnly = false, exclud
       toDateStr = `${yearStr}${monthStr.padStart(2, '0')}${String(lastDay).padStart(2, '0')}`;
     }
 
-    // 2. 쿼리 객체 구성
-    let empQuery = supabaseAdmin
-      .from('db_employees')
-      .select('*')
-      .eq('is_active', true)
-      .order('dept', { ascending: true })
-      .order('name', { ascending: true });
+    // 2. 쿼리 빌더 함수 정의 (페이지네이션 전수 페칭용)
+    const empQueryFn = () => {
+      let q = supabaseAdmin
+        .from('db_employees')
+        .select('*')
+        .eq('is_active', true)
+        .order('dept', { ascending: true })
+        .order('name', { ascending: true });
+      if (empNo) q = q.eq('emp_no', empNo);
+      return q;
+    };
 
-    if (empNo) {
-      empQuery = empQuery.eq('emp_no', empNo);
-    }
-
-    let logQuery = null;
-    if (!excludeLogs) {
-      logQuery = supabaseAdmin
+    const logQueryFn = () => {
+      let q = supabaseAdmin
         .from('db_attendance')
         .select('*')
         .gte('a_time', fromTime)
         .lte('a_time', toTime)
-        .order('a_time', { ascending: true })
-        .limit(50000);
+        .order('a_time', { ascending: true });
+      if (empNo) q = q.eq('emp_no', empNo);
+      return q;
+    };
 
-      if (empNo) {
-        logQuery = logQuery.eq('emp_no', empNo);
-      }
-    }
+    const leaveQueryFn = () => {
+      let q = supabaseAdmin
+        .from('db_leaves')
+        .select('*')
+        .lte('start_date', toDateStr)
+        .gte('end_date', fromDateStr);
+      if (empNo) q = q.eq('emp_no', empNo);
+      return q;
+    };
 
-    let leaveQuery = supabaseAdmin
-      .from('db_leaves')
-      .select('*')
-      .lte('start_date', toDateStr)
-      .gte('end_date', fromDateStr)
-      .limit(10000);
-
-    if (empNo) {
-      leaveQuery = leaveQuery.eq('emp_no', empNo);
-    }
-
-    // 3. 모든 쿼리를 Promise.all 병렬 실행 (순차 7회 -> 병렬 1회 왕복)
+    // 3. 전수 페칭 병렬 실행
     const [
-      empRes,
-      logRes,
-      leaveRes,
-      corrRes,
-      overrideRes,
-      adjRes,
+      employeesData,
+      logsData,
+      leavesData,
+      corrData,
+      overrideData,
+      adjData,
     ] = await Promise.all([
-      empQuery.limit(500),
-      logQuery || Promise.resolve({ data: [] }),
-      leaveQuery,
-      supabaseAdmin.from('db_attendance_corrections').select('*').limit(5000),
-      supabaseAdmin.from('db_schedule_overrides').select('*').limit(5000),
-      supabaseAdmin.from('db_attendance_log_adjustments').select('*').limit(5000),
+      fetchAllRows(empQueryFn),
+      !excludeLogs ? fetchAllRows(logQueryFn) : Promise.resolve([]),
+      fetchAllRows(leaveQueryFn),
+      fetchAllRows(() => supabaseAdmin.from('db_attendance_corrections').select('*')),
+      fetchAllRows(() => supabaseAdmin.from('db_schedule_overrides').select('*')),
+      fetchAllRows(() => supabaseAdmin.from('db_attendance_log_adjustments').select('*')),
     ]);
 
-    if (empRes.error) throw empRes.error;
-    if (logRes?.error) throw logRes.error;
-    if (leaveRes.error) throw leaveRes.error;
-
-    const employees = (empRes.data || []).map((e) => ({
+    const employees = (employeesData || []).map((e) => ({
       emp_no: e.emp_no,
       name: e.name,
       dept: e.dept,
@@ -95,7 +114,7 @@ export async function fetchAttendanceLogs(month, { dashboardOnly = false, exclud
       position: e.position || '',
     }));
 
-    const leaves = (leaveRes.data || []).map((l) => ({
+    const leaves = (leavesData || []).map((l) => ({
       empNo: l.emp_no,
       empName: l.emp_name,
       startDate: l.start_date,
@@ -107,11 +126,11 @@ export async function fetchAttendanceLogs(month, { dashboardOnly = false, exclud
 
     return {
       employees,
-      logs: logRes.data || [],
+      logs: logsData || [],
       leaves,
-      corrections: corrRes.data || [],
-      overrides: overrideRes.data || [],
-      logAdjustments: adjRes.data || [],
+      corrections: corrData || [],
+      overrides: overrideData || [],
+      logAdjustments: adjData || [],
     };
   } catch (error) {
     console.error('fetchAttendanceLogs error:', error);
@@ -121,7 +140,7 @@ export async function fetchAttendanceLogs(month, { dashboardOnly = false, exclud
 
 export async function fetchEmployeeSchedules() {
   try {
-    const { data, error } = await supabaseAdmin.from('db_employee_schedules').select('*');
+    const { data, error } = await supabaseAdmin.from('db_employee_schedules').select('*').limit(1000);
     if (error) {
       console.warn('fetchEmployeeSchedules warning:', error.message);
       return [];
