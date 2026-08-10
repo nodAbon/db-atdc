@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 
 export default function CalendarLinksPage() {
-  const [theme, setTheme] = usePersistentTheme('dark');
+  const [theme, setTheme] = usePersistentTheme('light');
   const [time, setTime] = useState('');
   const [subscriptions, setSubscriptions] = useState([]);
   const [depts, setDepts] = useState([]);

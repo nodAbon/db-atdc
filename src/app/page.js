@@ -12,7 +12,7 @@ import { getCurrentMonthKey } from '../lib/dashboardUtils';
 function DashboardContent() {
   const searchParams = useSearchParams();
   const [activeTab, setActiveTab] = useState('DASHBOARD');
-  const [theme, setTheme] = usePersistentTheme('dark');
+  const [theme, setTheme] = usePersistentTheme('light');
   const [time, setTime] = useState('');
 
   // 1. 대시보드 상태 데이터

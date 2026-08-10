@@ -7,7 +7,7 @@ import { usePersistentTheme } from '../../lib/usePersistentTheme';
 import { getCurrentMonthKey } from '../../lib/dashboardUtils';
 
 function MonthlyPageContent() {
-  const [theme, setTheme] = usePersistentTheme('dark');
+  const [theme, setTheme] = usePersistentTheme('light');
   const [selectedMonth, setSelectedMonth] = useState(() => getCurrentMonthKey());
   const [monthlyData, setMonthlyData] = useState({
     employees: [],

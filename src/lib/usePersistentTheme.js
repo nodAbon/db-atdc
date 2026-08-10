@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 
-export function usePersistentTheme(defaultTheme = 'dark') {
+export function usePersistentTheme(defaultTheme = 'light') {
   const [theme, setThemeState] = useState(defaultTheme);
 
   useEffect(() => {

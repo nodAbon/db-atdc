@@ -4,36 +4,35 @@
 @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css');
 
 :root {
-  /* Brand (fixed across themes) */
-  --blue:   #5B88D6;
-  --green:  #5FA971;
-  --amber:  #C9964B;
-  --red:    #D06B6B;
-  --purple: #9D7BD8;
-  --cyan:   #55B8C8;
+  /* Brand */
+  --blue:   #3B82F6;
+  --green:  #10B981;
+  --amber:  #F59E0B;
+  --red:    #EF4444;
+  --purple: #8B5CF6;
+  --cyan:   #06B6D4;
 
-  /* Dark theme defaults */
-  --bg-body:    #11141B;
-  --bg-sidebar: #151923;
-  --bg-card:    #181D28;
-  --bg-card-2:  #1C2230;
-  --bg-input:   #1A2030;
+  /* Default: Light theme */
+  --bg-body:    #F8FAFC;
+  --bg-sidebar: #FFFFFF;
+  --bg-card:    #FFFFFF;
+  --bg-card-2:  #F1F5F9;
+  --bg-input:   #F8FAFC;
 
-  --border:       rgba(255, 255, 255, 0.07);
-  --border-hover: rgba(255, 255, 255, 0.13);
+  --border:       rgba(15, 23, 42, 0.08);
+  --border-hover: rgba(15, 23, 42, 0.16);
 
-  --text-1: #ECF2F9;
-  --text-2: #AAB6C7;
-  --text-3: #788696;
+  --text-1: #0F172A;
+  --text-2: #475569;
+  --text-3: #94A3B8;
 
-  /* Theme-variant overlays */
-  --bg-overlay-sm:  rgba(255, 255, 255, 0.028);
-  --bg-overlay-md:  rgba(255, 255, 255, 0.045);
-  --row-hover:      rgba(255, 255, 255, 0.016);
-  --border-row:     rgba(255, 255, 255, 0.022);
-  --scrollbar-bg:   rgba(255, 255, 255, 0.08);
-  --chart-grid:     rgba(255, 255, 255, 0.035);
-  --shadow-card:    0 10px 28px rgba(0,0,0,0.18);
+  --bg-overlay-sm:  rgba(15, 23, 42, 0.03);
+  --bg-overlay-md:  rgba(15, 23, 42, 0.05);
+  --row-hover:      rgba(15, 23, 42, 0.02);
+  --border-row:     rgba(15, 23, 42, 0.05);
+  --scrollbar-bg:   rgba(15, 23, 42, 0.12);
+  --chart-grid:     rgba(15, 23, 42, 0.06);
+  --shadow-card:    0 4px 20px rgba(15, 23, 42, 0.05);
 
   /* Font */
   --font: 'Pretendard', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
@@ -48,39 +47,43 @@
   --ease: all 0.16s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* ── Light theme overrides ─────────────────────────── */
-[data-theme="light"] {
-  --bg-body:    #F1F4F8;
-  --bg-sidebar: #FAFBFD;
-  --bg-card:    #FCFDFE;
-  --bg-card-2:  #F3F6FB;
-  --bg-input:   #EBEFF6;
+/* ── Dark theme overrides (optional) ───────────────── */
+[data-theme="dark"] {
+  --bg-body:    #0F172A;
+  --bg-sidebar: #1E293B;
+  --bg-card:    #1E293B;
+  --bg-card-2:  #334155;
+  --bg-input:   #0F172A;
 
-  --border:       rgba(15, 23, 42, 0.09);
-  --border-hover: rgba(15, 23, 42, 0.15);
+  --border:       rgba(255, 255, 255, 0.08);
+  --border-hover: rgba(255, 255, 255, 0.16);
 
-  --text-1: #101A2A;
-  --text-2: #425066;
-  --text-3: #687487;
-  --green:  #4D8B5B;
-  --purple: #8C70C8;
+  --text-1: #F8FAFC;
+  --text-2: #CBD5E1;
+  --text-3: #64748B;
 
-  --bg-overlay-sm:  rgba(15, 23, 42, 0.03);
-  --bg-overlay-md:  rgba(15, 23, 42, 0.05);
-  --row-hover:      rgba(15, 23, 42, 0.02);
-  --border-row:     rgba(15, 23, 42, 0.05);
-  --scrollbar-bg:   rgba(15, 23, 42, 0.12);
-  --chart-grid:     rgba(15, 23, 42, 0.06);
-  --shadow-card:    0 10px 22px rgba(15, 23, 42, 0.06);
+  --bg-overlay-sm:  rgba(255, 255, 255, 0.03);
+  --bg-overlay-md:  rgba(255, 255, 255, 0.05);
+  --row-hover:      rgba(255, 255, 255, 0.02);
+  --border-row:     rgba(255, 255, 255, 0.05);
+  --scrollbar-bg:   rgba(255, 255, 255, 0.12);
+  --chart-grid:     rgba(255, 255, 255, 0.05);
+  --shadow-card:    0 10px 28px rgba(0,0,0,0.25);
 }
 
-/* ── Reset ─────────────────────────────────────────── */
+/* ── Reset & Link Clean ────────────────────────────── */
 *, *::before, *::after {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
   font-family: var(--font);
   letter-spacing: -0.12px;
+}
+
+a, a:visited, a:hover, a:active, a:focus,
+Link, .tab-btn, .brand {
+  text-decoration: none !important;
+  color: inherit;
 }
 
 body {

@@ -18,7 +18,7 @@ import {
 import { formatTimeString } from '../../lib/dashboardUtils';
 
 export default function AttendanceRecordsPage() {
-  const [theme, setTheme] = usePersistentTheme('dark');
+  const [theme, setTheme] = usePersistentTheme('light');
   const [time, setTime] = useState('');
   const [date, setDate] = useState(() => {
     const d = new Date();
