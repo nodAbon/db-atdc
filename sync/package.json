@@ -1,0 +1,16 @@
+{
+  "name": "db-atdc-sync",
+  "version": "1.0.0",
+  "description": "db-atdc 1700 법인 전용 근태 & CAPS 동기화 데몬",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "sync:caps": "node caps.js",
+    "sync:emp": "node employees.js",
+    "sync:leaves": "node leaves.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.106.2",
+    "mysql2": "^3.22.3"
+  }
+}
