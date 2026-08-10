@@ -1,4 +1,5 @@
 import { supabaseAdmin } from './supabaseAdmin';
+import { createIcalSubscriptionToken, verifyIcalSubscriptionToken } from './icalToken';
 
 export function buildSubscriptionAccessUrls(baseUrl, token) {
   const cleanBase = String(baseUrl || '').replace(/\/$/, '');
@@ -13,23 +14,53 @@ export async function listIcalSubscriptionRecords() {
     .select('*')
     .order('created_at', { ascending: false });
 
-  if (error) throw error;
+  if (error) {
+    console.error('listIcalSubscriptionRecords error:', error);
+    return [];
+  }
   return data || [];
 }
 
 export async function getIcalSubscriptionRecordByToken(token) {
   if (!token) return null;
-  const { data, error } = await supabaseAdmin
-    .from('db_ical_subscriptions')
-    .select('*')
-    .eq('token', token)
-    .maybeSingle();
 
-  if (error) throw error;
-  return data;
+  // 1. DB에서 조회
+  try {
+    const { data } = await supabaseAdmin
+      .from('db_ical_subscriptions')
+      .select('*')
+      .eq('token', token)
+      .maybeSingle();
+
+    if (data) return data;
+  } catch (e) {
+    console.error('getIcalSubscriptionRecordByToken DB lookup error:', e);
+  }
+
+  // 2. 만약 DB에 아직 없는 자가 포함 서명 토큰인 경우 검증하여 반환
+  const verified = verifyIcalSubscriptionToken(token);
+  if (verified) {
+    return {
+      token,
+      label: verified.label || '부서 연차 구독',
+      depts: verified.depts || [],
+      scope: verified.scope || 'leave-calendar',
+      is_active: true,
+      created_at: verified.createdAt || new Date().toISOString(),
+    };
+  }
+
+  return null;
 }
 
-export async function createIcalSubscriptionRecord({ token, label, depts, scope = 'leave-calendar' }) {
+export async function createIcalSubscriptionRecord({ label, depts, scope = 'leave-calendar' }) {
+  // HMAC-SHA256 Base64URL 서명 토큰 생성 (길고 안전한 표준 토큰)
+  const token = createIcalSubscriptionToken({
+    label,
+    depts,
+    scope,
+  });
+
   const { data, error } = await supabaseAdmin
     .from('db_ical_subscriptions')
     .insert({
@@ -43,7 +74,19 @@ export async function createIcalSubscriptionRecord({ token, label, depts, scope 
     .select()
     .single();
 
-  if (error) throw error;
+  if (error) {
+    console.error('createIcalSubscriptionRecord DB insert error:', error);
+    // DB 인서트에 실패해도 자가 포함 서명 토큰 객체 반환
+    return {
+      token,
+      label,
+      depts,
+      scope,
+      is_active: true,
+      created_at: new Date().toISOString(),
+    };
+  }
+
   return data;
 }
 

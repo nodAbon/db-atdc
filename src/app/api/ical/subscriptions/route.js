@@ -61,16 +61,14 @@ export async function POST(request) {
       return NextResponse.json({ error: '하나 이상의 부서를 선택해야 합니다.' }, { status: 400 });
     }
 
-    const token = createIcalSubscriptionToken();
     const record = await createIcalSubscriptionRecord({
-      token,
       label: label || `${depts[0]} 외 ${depts.length - 1}개 부서 캘린더`,
       depts,
       scope: 'leave-calendar',
     });
 
     const baseUrl = getPublicBaseUrl(request);
-    const { url, webcalUrl } = buildSubscriptionAccessUrls(baseUrl, token);
+    const { url, webcalUrl } = buildSubscriptionAccessUrls(baseUrl, record.token);
 
     return NextResponse.json({
       success: true,

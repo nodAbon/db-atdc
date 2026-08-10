@@ -1,16 +1,67 @@
 import crypto from 'crypto';
 
-export function createIcalSubscriptionToken() {
-  return crypto.randomBytes(24).toString('hex');
-}
+const getSecret = () => {
+  return (
+    process.env.ICAL_SUBSCRIPTION_SECRET ||
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_ANON_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+    'db-atdc-default-ical-secret-key-2026'
+  );
+};
 
 export function normalizeIcalDeptList(depts = []) {
-  if (!Array.isArray(depts)) return [];
-  return Array.from(
-    new Set(
-      depts
-        .map((d) => String(d || '').trim())
+  return [
+    ...new Set(
+      (depts || [])
+        .map((dept) => String(dept || '').trim())
         .filter(Boolean)
-    )
-  );
+    ),
+  ];
+}
+
+export function createIcalSubscriptionToken(payload = {}) {
+  const cleanPayload = {
+    v: 1,
+    createdAt: new Date().toISOString(),
+    ...payload,
+    depts: normalizeIcalDeptList(payload.depts || []),
+  };
+
+  const body = Buffer.from(JSON.stringify(cleanPayload)).toString('base64url');
+  const sig = crypto
+    .createHmac('sha256', getSecret())
+    .update(body)
+    .digest('base64url');
+
+  return `${body}.${sig}`;
+}
+
+export function verifyIcalSubscriptionToken(token = '') {
+  const value = String(token || '').trim();
+  if (!value || !value.includes('.')) return null;
+
+  const [body, sig] = value.split('.');
+  if (!body || !sig) return null;
+
+  const expectedSig = crypto
+    .createHmac('sha256', getSecret())
+    .update(body)
+    .digest('base64url');
+
+  const sigBuf = Buffer.from(sig);
+  const expectedBuf = Buffer.from(expectedSig);
+  if (sigBuf.length !== expectedBuf.length) return null;
+  if (!crypto.timingSafeEqual(sigBuf, expectedBuf)) return null;
+
+  try {
+    const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
+    if (!payload || !Array.isArray(payload.depts)) return null;
+    return {
+      ...payload,
+      depts: normalizeIcalDeptList(payload.depts),
+    };
+  } catch {
+    return null;
+  }
 }
