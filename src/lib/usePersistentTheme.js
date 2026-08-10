@@ -3,21 +3,22 @@
 import { useState, useEffect } from 'react';
 
 export function usePersistentTheme(defaultTheme = 'light') {
-  const [theme, setThemeState] = useState(defaultTheme);
+  const [theme, setThemeState] = useState('light');
 
   useEffect(() => {
     try {
       const saved = localStorage.getItem('db_atdc_theme');
-      if (saved === 'light' || saved === 'dark') {
-        setThemeState(saved);
-        document.documentElement.setAttribute('data-theme', saved);
+      if (saved === 'dark') {
+        setThemeState('dark');
+        document.documentElement.setAttribute('data-theme', 'dark');
       } else {
-        document.documentElement.setAttribute('data-theme', defaultTheme);
+        setThemeState('light');
+        document.documentElement.setAttribute('data-theme', 'light');
       }
     } catch {
-      document.documentElement.setAttribute('data-theme', defaultTheme);
+      document.documentElement.setAttribute('data-theme', 'light');
     }
-  }, [defaultTheme]);
+  }, []);
 
   const setTheme = (nextTheme) => {
     setThemeState(nextTheme);
