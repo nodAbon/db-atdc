@@ -1,280 +1,440 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
-import {
-  Users,
-  CheckCircle2,
-  AlertCircle,
-  Calendar,
-  Search,
-  RefreshCw,
-  Clock,
-  Building2,
-} from 'lucide-react';
-import { formatTimeString, matchesDeptFilter } from '../../lib/dashboardUtils';
+import React, { memo, useMemo, useState } from 'react';
+import { CircleUserRound, Moon, Search, Sun } from 'lucide-react';
+import DashboardCalendarWidget from '../DashboardCalendarWidget';
+import { getStatusBadgeMeta } from '../../lib/leaveRules';
+import { matchesDeptFilter, normalizeDeptName, formatTimeString } from '../../lib/dashboardUtils';
 
-export default function DashboardTab({
-  employees = [],
-  todayAttendance = [],
-  todayLeaves = [],
-  loading = false,
-  onRefresh = () => {},
-  lastSynced = '',
-}) {
-  const [deptFilter, setDeptFilter] = useState('ALL');
-  const [searchQuery, setSearchQuery] = useState('');
+const koDateFormatter = new Intl.DateTimeFormat('ko-KR', {
+  timeZone: 'Asia/Seoul',
+  year: 'numeric',
+  month: 'long',
+  day: 'numeric',
+  weekday: 'long',
+});
 
-  // 1. 부서 목록 추출
-  const deptList = useMemo(() => {
-    const set = new Set(employees.map((e) => e.dept).filter(Boolean));
-    return ['ALL', ...Array.from(set)];
-  }, [employees]);
+function formatDeptLabel(value) {
+  const normalized = normalizeDeptName(value);
+  if (!normalized || normalized === 'ALL') return '전체 부서';
+  return normalized;
+}
 
-  // 2. 직원별 오늘 출퇴근 & 휴가 데이터 매핑
-  const employeeStatusList = useMemo(() => {
-    const attMap = new Map();
-    todayAttendance.forEach((att) => {
-      if (!att.emp_no) return;
-      if (!attMap.has(att.emp_no)) {
-        attMap.set(att.emp_no, []);
-      }
-      attMap.get(att.emp_no).push(att);
-    });
+function isLeaveStatus(emp) {
+  if (!emp) return false;
+  if (emp.todayLeave) return true;
 
-    const leaveMap = new Map();
-    todayLeaves.forEach((leave) => {
-      if (leave.emp_no) leaveMap.set(leave.emp_no, leave);
-    });
-
-    return employees.map((emp) => {
-      const logs = attMap.get(emp.emp_no) || [];
-      const leave = leaveMap.get(emp.emp_no);
-
-      // 출근/퇴근 계산 (가장 이른 시간: 출근, 가장 늦은 시간: 퇴근)
-      let clockIn = null;
-      let clockOut = null;
-      let gate = '-';
-
-      if (logs.length > 0) {
-        // 시간순 정렬
-        const sorted = [...logs].sort((a, b) => String(a.a_time).localeCompare(String(b.a_time)));
-        clockIn = sorted[0].a_time;
-        if (sorted.length > 1) {
-          clockOut = sorted[sorted.length - 1].a_time;
-        }
-        gate = sorted[0].gate_name || 'CAPS';
-      }
-
-      // 상태 계산
-      let status = '미출근';
-      let badgeType = 'badge-red';
-
-      if (leave) {
-        status = leave.leave_name || '연차/휴가';
-        badgeType = 'badge-purple';
-      } else if (clockIn) {
-        const timePart = clockIn.slice(8, 12); // HHmm
-        if (parseInt(timePart, 10) > 905) {
-          status = clockOut ? '지각/퇴근' : '지각';
-          badgeType = 'badge-amber';
-        } else {
-          status = clockOut ? '근무완료' : '근무중';
-          badgeType = 'badge-green';
-        }
-      }
-
-      return {
-        ...emp,
-        clockIn,
-        clockOut,
-        gate,
-        status,
-        badgeType,
-        leave,
-      };
-    });
-  }, [employees, todayAttendance, todayLeaves]);
-
-  // 3. 필터링
-  const filteredList = useMemo(() => {
-    return employeeStatusList.filter((item) => {
-      const matchesDept = matchesDeptFilter(item.dept, deptFilter);
-      const matchesSearch = !searchQuery ||
-        item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        item.emp_no.includes(searchQuery);
-      return matchesDept && matchesSearch;
-    });
-  }, [employeeStatusList, deptFilter, searchQuery]);
-
-  // 4. 통계 요약
-  const stats = useMemo(() => {
-    const total = employees.length;
-    let present = 0;
-    let late = 0;
-    let onLeave = 0;
-    let absent = 0;
-
-    employeeStatusList.forEach((item) => {
-      if (item.leave) {
-        onLeave++;
-      } else if (item.clockIn) {
-        present++;
-        if (item.status.includes('지각')) late++;
-      } else {
-        absent++;
-      }
-    });
-
-    return { total, present, late, onLeave, absent };
-  }, [employees.length, employeeStatusList]);
+  const status = String(emp.status || '').trim();
+  if (!status) return false;
 
   return (
-    <div className="page-container">
-      {/* 통계 요약 그리드 */}
-      <div className="stats-grid">
-        <div className="stat-card">
-          <div className="stat-icon-wrapper" style={{ background: 'var(--blue-subtle)', color: 'var(--blue)' }}>
-            <Users size={24} />
-          </div>
-          <div className="stat-info">
-            <span className="stat-label">전체 임직원</span>
-            <span className="stat-value">{stats.total}명</span>
-          </div>
-        </div>
+    [
+      '연차',
+      '공가',
+      '오전반차',
+      '오후반차',
+      '오전반반차',
+      '오후반반차',
+      '기타휴가',
+      '경조휴가',
+      '휴가',
+    ].includes(status) ||
+    status.endsWith('휴가') ||
+    status.endsWith('반차') ||
+    status.endsWith('반일')
+  );
+}
 
-        <div className="stat-card">
-          <div className="stat-icon-wrapper" style={{ background: 'var(--green-subtle)', color: 'var(--green)' }}>
-            <CheckCircle2 size={24} />
-          </div>
-          <div className="stat-info">
-            <span className="stat-label">출근 완료</span>
-            <span className="stat-value" style={{ color: 'var(--green)' }}>{stats.present}명</span>
-          </div>
-        </div>
-
-        <div className="stat-card">
-          <div className="stat-icon-wrapper" style={{ background: 'var(--amber-subtle)', color: 'var(--amber)' }}>
-            <AlertCircle size={24} />
-          </div>
-          <div className="stat-info">
-            <span className="stat-label">지각 / 미출근</span>
-            <span className="stat-value" style={{ color: 'var(--amber)' }}>{stats.late + stats.absent}명</span>
-          </div>
-        </div>
-
-        <div className="stat-card">
-          <div className="stat-icon-wrapper" style={{ background: 'var(--purple-subtle)', color: 'var(--purple)' }}>
-            <Calendar size={24} />
-          </div>
-          <div className="stat-info">
-            <span className="stat-label">연차 / 휴가</span>
-            <span className="stat-value" style={{ color: 'var(--purple)' }}>{stats.onLeave}명</span>
-          </div>
-        </div>
+function StatCard({ label, value, colorClass, active, onClick }) {
+  return (
+    <button
+      type="button"
+      className={`kpi-card kpi-card--${colorClass}${active ? ' is-active' : ''}`}
+      onClick={onClick}
+      style={{
+        cursor: onClick ? 'pointer' : 'default',
+        textAlign: 'left',
+        alignItems: 'flex-start',
+        justifyContent: 'flex-start',
+        padding: '25px 18px 12px',
+        minHeight: '136px',
+      }}
+    >
+      <div className="kpi-label">{label}</div>
+      <div className={`kpi-value kpi-value--${colorClass}`} style={{ marginTop: '8px' }}>
+        {value}
+        <small style={{ fontSize: 13, color: 'var(--text-3)' }}>명</small>
       </div>
+    </button>
+  );
+}
 
-      {/* 필터 및 검색 바 */}
-      <div className="filter-bar">
-        <div className="filter-group">
-          <Building2 size={16} style={{ color: 'var(--text-3)' }} />
-          <select
-            className="select"
-            value={deptFilter}
-            onChange={(e) => setDeptFilter(e.target.value)}
-          >
-            {deptList.map((d) => (
-              <option key={d} value={d}>{d === 'ALL' ? '전체 부서' : d}</option>
-            ))}
-          </select>
+const AVATAR_TONES = [
+  { bg: 'rgba(59, 130, 246, 0.14)', fg: 'var(--blue)' },
+  { bg: 'rgba(95, 169, 113, 0.14)', fg: 'var(--green)' },
+  { bg: 'rgba(201, 150, 75, 0.14)', fg: 'var(--amber)' },
+  { bg: 'rgba(157, 123, 216, 0.14)', fg: 'var(--purple)' },
+  { bg: 'rgba(232, 94, 175, 0.14)', fg: 'var(--pink)' },
+  { bg: 'rgba(57, 160, 173, 0.14)', fg: 'var(--teal)' },
+];
 
-          <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
-            <Search size={15} style={{ position: 'absolute', left: 10, color: 'var(--text-3)' }} />
-            <input
-              type="text"
-              className="input"
-              style={{ paddingLeft: 32, width: 200 }}
-              placeholder="이름 또는 사번 검색"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
-          </div>
+function getAvatarTone(seed) {
+  const text = String(seed || '').trim() || 'avatar';
+  let hash = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    hash = (hash * 31 + text.charCodeAt(i)) >>> 0;
+  }
+  return AVATAR_TONES[hash % AVATAR_TONES.length];
+}
+
+function DashboardTab({
+  data,
+  viewDeptFilter = 'ALL',
+  myDept = '전체 부서',
+  calendarMonth,
+  setCalendarMonth,
+  selectedCalendarDate,
+  setSelectedCalendarDate,
+  visibleDashboardLeaves = [],
+  calendarEmployeeNameLookup = new Map(),
+  resolvedDeptFilterValue = 'ALL',
+  deptOptions = [],
+  hasFullAccess = true,
+  time = '',
+  theme = 'dark',
+  toggleTheme = () => {},
+  setViewDeptFilter = () => {},
+}) {
+  const [statusFilter, setStatusFilter] = useState('ALL');
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const deptFilterValue = normalizeDeptName(resolvedDeptFilterValue || viewDeptFilter) || 'ALL';
+  const todayLabel = koDateFormatter.format(new Date());
+
+  const deptFilteredStatuses = useMemo(() => {
+    const employees = Array.isArray(data?.employeeStatuses) ? data.employeeStatuses : [];
+    return employees.filter((emp) => matchesDeptFilter(emp?.dept, deptFilterValue));
+  }, [data?.employeeStatuses, deptFilterValue]);
+
+  const hasActiveCheckIn = (emp) => String(emp?.checkIn || '').trim() && String(emp?.checkIn || '').trim() !== '-';
+
+  const visibleStatuses = useMemo(() => {
+    const search = searchQuery.trim();
+    return deptFilteredStatuses.filter((emp) => {
+      const name = String(emp?.name || '').trim();
+      const empNo = String(emp?.empNo || emp?.emp_no || '').trim();
+      const dept = String(emp?.dept || '').trim();
+      const statusText = String(emp?.status || '').trim();
+      const searchMatch = !search || [name, empNo, dept].some((text) => text.includes(search));
+      if (!searchMatch) return false;
+      if (statusFilter === 'PRESENT') return hasActiveCheckIn(emp);
+      if (statusFilter === 'ABSENT') return statusText.includes('미출근') || statusText === 'ABSENT';
+      if (statusFilter === 'LATE') return !!emp?.isLate;
+      if (statusFilter === 'LEAVE') return isLeaveStatus(emp);
+      return true;
+    });
+  }, [deptFilteredStatuses, searchQuery, statusFilter]);
+
+  const stats = useMemo(() => {
+    return deptFilteredStatuses.reduce(
+      (acc, emp) => {
+        acc.total += 1;
+        if (hasActiveCheckIn(emp)) acc.present += 1;
+        if (emp?.isLate) acc.late += 1;
+        if (isLeaveStatus(emp)) acc.leave += 1;
+        if (hasActiveCheckIn(emp)) acc.workingNow += 1;
+        return acc;
+      },
+      {
+        total: 0,
+        present: 0,
+        late: 0,
+        leave: 0,
+        workingNow: 0,
+      }
+    );
+  }, [deptFilteredStatuses]);
+
+  const deptGroups = useMemo(() => {
+    const groupMap = new Map();
+
+    visibleStatuses.forEach((emp) => {
+      const dept = String(emp?.dept || emp?.team || '미분류').trim() || '미분류';
+      if (!groupMap.has(dept)) {
+        groupMap.set(dept, {
+          dept,
+          total: 0,
+          present: 0,
+          late: 0,
+          employees: [],
+        });
+      }
+
+      const group = groupMap.get(dept);
+      group.total += 1;
+      if (hasActiveCheckIn(emp)) group.present += 1;
+      if (emp?.isLate) group.late += 1;
+      group.employees.push(emp);
+    });
+
+    return Array.from(groupMap.values()).sort((a, b) => a.dept.localeCompare(b.dept, 'ko-KR'));
+  }, [visibleStatuses]);
+
+  const deptDistribution = useMemo(() => {
+    const source = Array.isArray(data?.deptData) ? data.deptData : [];
+    return source
+      .filter((dept) => matchesDeptFilter(dept?.name, deptFilterValue))
+      .sort((a, b) => String(a?.name || '').localeCompare(String(b?.name || ''), 'ko-KR'));
+  }, [data?.deptData, deptFilterValue]);
+
+  const dashboardLeaves = useMemo(() => visibleDashboardLeaves || [], [visibleDashboardLeaves]);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      <div className="dashboard-hero" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
+        <div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-2)', marginBottom: 4 }}>{todayLabel}</div>
+          <h1 style={{ fontSize: 24, fontWeight: 800, lineHeight: 1.15, letterSpacing: '-0.03em', color: 'var(--text-1)', margin: 0 }}>
+            실시간 직원 상태 모니터링
+          </h1>
+          <p style={{ marginTop: 6, fontSize: 12, color: 'var(--text-2)' }}>
+            오늘 기준 출근, 부서 현황, 실시간 직원 상태를 집계합니다.
+          </p>
         </div>
 
-        <div className="filter-group">
-          {lastSynced && (
-            <span style={{ fontSize: 12, color: 'var(--text-3)' }}>
-              동기화: {lastSynced}
-            </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginLeft: 'auto' }}>
+          <div className="db-indicator" style={{ minWidth: 108 }}>
+            <span style={{ width: 8, height: 8, borderRadius: 999, background: 'var(--green)' }} />
+            <span className="db-name">{time || '--:--:--'}</span>
+          </div>
+
+          {hasFullAccess ? (
+            <select
+              className="ui-select"
+              value={deptFilterValue}
+              onChange={(e) => setViewDeptFilter(e.target.value)}
+              aria-label="부서 선택"
+            >
+              {deptOptions.map((dept) => (
+                <option key={dept} value={dept}>
+                  {dept === 'ALL' ? '전체 부서' : dept}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <div className="db-indicator" style={{ minWidth: 108 }}>
+              <span className="db-name">{formatDeptLabel(myDept)}</span>
+            </div>
           )}
+
           <button
             type="button"
-            className="btn btn-secondary"
-            onClick={onRefresh}
-            disabled={loading}
+            className="icon-btn"
+            onClick={toggleTheme}
+            title={theme === 'dark' ? '라이트 모드' : '다크 모드'}
+            aria-label={theme === 'dark' ? '라이트 모드로 전환' : '다크 모드로 전환'}
           >
-            <RefreshCw size={14} className={loading ? 'spin' : ''} />
-            <span>{loading ? '새로고침 중...' : '새로고침'}</span>
+            {theme === 'dark' ? <Sun style={{ width: 15, height: 15 }} /> : <Moon style={{ width: 15, height: 15 }} />}
           </button>
         </div>
       </div>
 
-      {/* 오늘 근태 현황 테이블 */}
-      <div className="card">
-        <div className="card-header">
-          <div className="card-title">
-            <Clock size={18} style={{ color: 'var(--blue)' }} />
-            <span>오늘의 실시간 출퇴근 현황</span>
-            <span className="badge badge-blue">{filteredList.length}명</span>
+      <div className="kpi-grid">
+        <StatCard
+          label="전체 재직 인원"
+          value={stats.total}
+          colorClass="blue"
+          active={statusFilter === 'ALL'}
+          onClick={() => setStatusFilter('ALL')}
+        />
+        <StatCard
+          label="오늘 정상 근무"
+          value={stats.present}
+          colorClass="green"
+          active={statusFilter === 'PRESENT'}
+          onClick={() => setStatusFilter('PRESENT')}
+        />
+        <StatCard
+          label="오늘 지각 발생"
+          value={stats.late}
+          colorClass="amber"
+          active={statusFilter === 'LATE'}
+          onClick={() => setStatusFilter('LATE')}
+        />
+        <StatCard
+          label="오늘 휴가/연차"
+          value={stats.leave}
+          colorClass="purple"
+          active={statusFilter === 'LEAVE'}
+          onClick={() => setStatusFilter('LEAVE')}
+        />
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 2fr) minmax(0, 0.9fr)', gap: 20, alignItems: 'start' }}>
+        <div className="card dashboard-main-card" style={{ padding: 0, overflow: 'hidden' }}>
+          <div className="card-header" style={{ padding: '16px 18px 10px' }}>
+            <div>
+              <h3 className="card-title">실시간 임직원 근태 목록</h3>
+              <p className="card-subtitle">오늘 기준 전체 직원의 상태와 출퇴근 기록</p>
+            </div>
+            <div style={{ position: 'relative', minWidth: 220 }}>
+              <Search style={{ position: 'absolute', left: 11, top: 10, width: 14, height: 14, color: 'var(--text-3)' }} />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="이름/사번/부서 검색"
+                className="search-input"
+                style={{ paddingLeft: 32 }}
+              />
+            </div>
+          </div>
+
+          <div className="table-wrapper status-table-wrapper">
+            <table className="table status-table dashboard-status-table" style={{ tableLayout: 'fixed', width: '100%' }}>
+              <colgroup>
+                <col style={{ width: '24%' }} />
+                <col style={{ width: '18%' }} />
+                <col style={{ width: '17%' }} />
+                <col style={{ width: '17%' }} />
+                <col style={{ width: '24%' }} />
+              </colgroup>
+              <thead>
+                <tr>
+                  <th>사원 정보</th>
+                  <th>부서</th>
+                  <th>기준 출근</th>
+                  <th>출근</th>
+                  <th>현재 상태</th>
+                </tr>
+              </thead>
+              <tbody>
+                {deptGroups.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-3)', padding: '40px 16px' }}>
+                      조건에 맞는 직원이 없습니다.
+                    </td>
+                  </tr>
+                ) : (
+                  deptGroups.map((group) => {
+                    const ratio = group.total > 0 ? Math.round((group.present / group.total) * 100) : 0;
+                    return (
+                      <React.Fragment key={group.dept}>
+                        <tr className="dashboard-group-row">
+                          <td colSpan={5} style={{ padding: '0' }}>
+                            <div className="dashboard-group-header">
+                              <div className="dashboard-group-topline">
+                                <div className="dashboard-group-title">
+                                  <span>{group.dept}</span>
+                                  <span className="dashboard-group-count">{group.present}/{group.total}명 출근</span>
+                                </div>
+                                <div className="dashboard-group-rate">{ratio}%</div>
+                              </div>
+                              <div className="dashboard-group-bar">
+                                <span style={{ width: `${Math.max(10, ratio)}%` }} />
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                        {group.employees.map((emp) => {
+                          const displayStatus = emp.todayLeave?.leaveName || (hasActiveCheckIn(emp) ? '근무중' : emp.status);
+                          const badgeMeta = getStatusBadgeMeta(displayStatus, emp.todayLeave || emp);
+                          const isLate = !!emp.isLate;
+                          const avatarTone = getAvatarTone(emp.empNo || emp.emp_no || emp.name);
+                          const formattedCheckIn = formatTimeString(emp.checkIn, false);
+
+                          return (
+                            <tr key={`${emp.empNo || emp.emp_no || emp.name}-${emp.dept || ''}`}>
+                              <td>
+                                <div className="dashboard-emp-cell">
+                                  <div className="dashboard-avatar" style={{ background: avatarTone.bg, color: avatarTone.fg }}>
+                                    <CircleUserRound size={17} strokeWidth={1.8} />
+                                  </div>
+                                  <div className="dashboard-emp-meta">
+                                    <div className="dashboard-emp-name">{emp.name}</div>
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="dashboard-dept-cell">{emp.dept}</td>
+                              <td className="dashboard-time-cell" style={{ textAlign: 'center' }}>{emp.scheduleTime || '-'}</td>
+                              <td className="dashboard-time-cell" style={{ textAlign: 'center', color: isLate ? 'var(--amber)' : 'var(--green)', fontWeight: 600 }}>
+                                {formattedCheckIn || '-'}
+                                {isLate ? <span className="status-dot amber" style={{ marginLeft: 6 }} title="지각" /> : null}
+                              </td>
+                              <td style={{ textAlign: 'center' }}>
+                                <span className={`badge ${badgeMeta.className || 'gray'}`} style={badgeMeta.style}>
+                                  {badgeMeta.label}
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </React.Fragment>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
 
-        <div className="table-wrapper">
-          <table className="custom-table">
-            <thead>
-              <tr>
-                <th>사번</th>
-                <th>이름</th>
-                <th>부서</th>
-                <th>출근 시간</th>
-                <th>퇴근 시간</th>
-                <th>근태 상태</th>
-                <th>인식 게이트</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredList.length === 0 ? (
-                <tr>
-                  <td colSpan={7} style={{ textAlign: 'center', padding: '36px', color: 'var(--text-3)' }}>
-                    조회된 임직원 데이터가 없습니다.
-                  </td>
-                </tr>
+        <div className="dashboard-side-stack" style={{ display: 'flex', flexDirection: 'column', gap: 16, alignItems: 'stretch' }}>
+          <div className="dashboard-calendar-shell">
+            <DashboardCalendarWidget
+              calendarMonth={calendarMonth}
+              setCalendarMonth={setCalendarMonth}
+              calendarLeaves={dashboardLeaves}
+              employeeNameLookup={calendarEmployeeNameLookup}
+              selectedCalendarDate={selectedCalendarDate}
+              setSelectedCalendarDate={setSelectedCalendarDate}
+              eyebrow="오늘의 미니 캘린더"
+              compact
+              hideLegend
+              bare
+            />
+          </div>
+
+          <div className="card dashboard-side-card is-compact" style={{ padding: 16 }}>
+            <div className="card-header" style={{ padding: 0, marginBottom: 12 }}>
+              <div>
+                <h3 className="card-title">부서별 출근 현황</h3>
+                <p className="card-subtitle">현재 선택된 부서 기준 출근 비율</p>
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gap: 12 }}>
+              {deptDistribution.length === 0 ? (
+                <div style={{ color: 'var(--text-3)', fontSize: 13, padding: '10px 2px' }}>
+                  표시할 부서 정보가 없습니다.
+                </div>
               ) : (
-                filteredList.map((item) => (
-                  <tr key={item.emp_no}>
-                    <td style={{ fontFamily: 'var(--mono)', fontWeight: 600 }}>{item.emp_no}</td>
-                    <td style={{ fontWeight: 600 }}>{item.name}</td>
-                    <td style={{ color: 'var(--text-2)' }}>{item.dept || '-'}</td>
-                    <td style={{ fontFamily: 'var(--mono)' }}>
-                      {formatTimeString(item.clockIn)}
-                    </td>
-                    <td style={{ fontFamily: 'var(--mono)' }}>
-                      {formatTimeString(item.clockOut)}
-                    </td>
-                    <td>
-                      <span className={`badge ${item.badgeType}`}>
-                        {item.status}
-                      </span>
-                    </td>
-                    <td style={{ color: 'var(--text-3)', fontSize: 12 }}>
-                      {item.gate}
-                    </td>
-                  </tr>
+                deptDistribution.map((dept) => (
+                  <div key={dept.name} style={{ display: 'grid', gap: 6 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                      <div style={{ fontSize: 13, color: 'var(--text-1)', fontWeight: 600 }}>{dept.name}</div>
+                      <div style={{ fontSize: 12, color: 'var(--text-2)' }}>
+                        {dept.present}/{dept.total}명
+                      </div>
+                    </div>
+                    <div style={{ height: 6, borderRadius: 999, background: 'var(--border-soft)', overflow: 'hidden' }}>
+                      <div
+                        style={{
+                          width: `${dept.total > 0 ? Math.round((dept.present / dept.total) * 100) : 0}%`,
+                          height: '100%',
+                          borderRadius: 999,
+                          background: 'linear-gradient(90deg, var(--green), var(--blue))',
+                        }}
+                      />
+                    </div>
+                  </div>
                 ))
               )}
-            </tbody>
-          </table>
+            </div>
+          </div>
         </div>
       </div>
     </div>
   );
 }
+
+export default memo(DashboardTab);

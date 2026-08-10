@@ -1,39 +1,108 @@
+import { getKstMonthKey } from './kstDate.js';
+import { isNightTeamDept } from './nightScheduleRules.js';
+
 export const COMPANY_CODE = '1700';
 
-export function getCurrentMonthKey(date = new Date()) {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  return `${y}-${m}`;
-}
+export const normalizeDeptName = (value) => String(value ?? '').trim();
+export const normalizeDeptLoose = (value) => normalizeDeptName(value).replace(/\s+/g, '');
 
-export function normalizeDeptName(dept) {
-  return String(dept || '').trim() || '소속 미지정';
-}
+export const matchesDeptFilter = (itemDept, filterDept) => {
+  if (!filterDept || filterDept === 'ALL') return true;
+  return normalizeDeptLoose(itemDept) === normalizeDeptLoose(filterDept);
+};
 
-export function normalizeEmpNoKey(empNo) {
-  const digits = String(empNo ?? '').replace(/\D/g, '');
+export const normalizeEmpNoKey = (value) => {
+  const digits = String(value ?? '').replace(/\D/g, '');
   if (!digits) return '';
   if (digits.startsWith(COMPANY_CODE) && digits.length >= 12) {
     return digits.slice(COMPANY_CODE.length).slice(-8).replace(/^0+/, '') || digits.slice(-8);
   }
   return digits.slice(-8).replace(/^0+/, '') || digits.slice(-8);
-}
+};
 
-export function matchesDeptFilter(itemDept, filterDept) {
-  if (!filterDept || filterDept === 'ALL') return true;
-  return normalizeDeptName(itemDept) === normalizeDeptName(filterDept);
-}
+export const clampToHalfHourSteps = (minutes = 0) => {
+  const safeMinutes = Math.max(0, Math.floor(Number(minutes) || 0));
+  return Math.floor(safeMinutes / 30) * 30;
+};
 
-export function formatTimeString(val) {
-  if (!val) return '-';
-  if (typeof val === 'string' && val.includes('T')) {
-    const d = new Date(val);
-    if (!Number.isNaN(d.getTime())) {
-      return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
+export const formatHalfHourSteps = (minutes = 0) => {
+  const halfHours = Math.floor(Math.max(0, Number(minutes) || 0) / 30) / 2;
+  return Number.isInteger(halfHours) ? `${halfHours}.0` : `${halfHours}`;
+};
+
+export const inferScheduleEndTime = (start = '', dept = '') => {
+  const normalizedStart = normalizeDeptName(start).substring(0, 5);
+  const dayMap = {
+    '08:00': '17:00',
+    '09:00': '18:00',
+    '10:00': '19:00',
+    '18:00': '06:00',
+    '20:00': '08:00',
+  };
+
+  if (isNightTeamDept(dept)) {
+    if (normalizedStart === '18:00') return '06:00';
+    if (normalizedStart === '20:00') return '08:00';
+  }
+
+  return dayMap[normalizedStart] || '18:00';
+};
+
+export const getCurrentMonthKey = (date = new Date()) => {
+  return getKstMonthKey(date);
+};
+
+export const getMonthRangeList = (pastCount = 24, futureCount = 24, baseDate = new Date()) => {
+  const list = [];
+  const [yearStr, monthStr] = getCurrentMonthKey(baseDate).split('-');
+  const year = Number(yearStr);
+  const month = Number(monthStr);
+
+  for (let i = -pastCount; i <= futureCount; i++) {
+    const d = new Date(Date.UTC(year, month - 1 + i, 1));
+    list.push(getCurrentMonthKey(d));
+  }
+  return list;
+};
+
+/**
+ * 20260810080054 -> "08:00:54" 또는 "08:00" 포맷팅
+ */
+export function formatTimeString(val, includeSeconds = true) {
+  if (!val || val === '-') return '-';
+  const str = String(val).trim();
+  const digits = str.replace(/\D/g, '');
+
+  if (digits.length >= 14) {
+    // YYYYMMDDHHmmss
+    const hh = digits.slice(8, 10);
+    const mm = digits.slice(10, 12);
+    const ss = digits.slice(12, 14);
+    return includeSeconds ? `${hh}:${mm}:${ss}` : `${hh}:${mm}`;
+  }
+
+  if (digits.length === 6) {
+    const hh = digits.slice(0, 2);
+    const mm = digits.slice(2, 4);
+    const ss = digits.slice(4, 6);
+    return includeSeconds ? `${hh}:${mm}:${ss}` : `${hh}:${mm}`;
+  }
+
+  if (digits.length === 4) {
+    return `${digits.slice(0, 2)}:${digits.slice(2, 4)}`;
+  }
+
+  if (str.includes('T') || str.includes(' ')) {
+    const timePart = str.includes('T') ? str.split('T')[1] : str.split(' ')[1];
+    if (timePart) {
+      const clean = timePart.split('+')[0].split('Z')[0].trim();
+      return includeSeconds ? clean.slice(0, 8) : clean.slice(0, 5);
     }
   }
-  if (typeof val === 'string' && val.length === 6) {
-    return `${val.slice(0, 2)}:${val.slice(2, 4)}:${val.slice(4, 6)}`;
+
+  if (/^\d{2}:\d{2}/.test(str)) {
+    return includeSeconds ? (str.length >= 8 ? str.slice(0, 8) : `${str.slice(0, 5)}:00`) : str.slice(0, 5);
   }
-  return String(val);
+
+  return str;
 }

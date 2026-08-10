@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, Suspense } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import AppSidebar from '../components/AppSidebar';
 import DashboardTab from '../components/tabs/DashboardTab';
@@ -15,21 +15,24 @@ function DashboardContent() {
   const [theme, setTheme] = usePersistentTheme('dark');
   const [time, setTime] = useState('');
 
-  // 1. 대시보드 오늘 데이터
-  const [todayData, setTodayData] = useState({
-    employees: [],
-    attendance: [],
+  // 1. 대시보드 상태 데이터
+  const [dashboardData, setDashboardData] = useState({
+    employeeStatuses: [],
+    deptData: [],
     leaves: [],
-    lastSynced: '',
   });
-  const [todayLoading, setTodayLoading] = useState(false);
+  const [dashboardLoading, setDashboardLoading] = useState(false);
+  const [calendarMonth, setCalendarMonth] = useState(() => getCurrentMonthKey());
+  const [selectedCalendarDate, setSelectedCalendarDate] = useState(null);
+  const [viewDeptFilter, setViewDeptFilter] = useState('ALL');
 
   // 2. 월간 근태보고 데이터
   const [selectedMonth, setSelectedMonth] = useState(() => getCurrentMonthKey());
   const [monthlyData, setMonthlyData] = useState({
     employees: [],
-    attendance: [],
+    gridData: {},
     leaves: [],
+    overrides: [],
   });
   const [monthlyLoading, setMonthlyLoading] = useState(false);
 
@@ -51,38 +54,38 @@ function DashboardContent() {
     return () => clearInterval(timer);
   }, []);
 
-  // 오늘 데이터 로드
-  const fetchTodayData = useCallback(async () => {
-    setTodayLoading(true);
+  // 오늘 대시보드 데이터 로드
+  const fetchDashboardData = useCallback(async () => {
+    setDashboardLoading(true);
     try {
-      const res = await fetch('/api/attendance/today');
-      const data = await res.json();
-      if (data.employees) {
-        setTodayData({
-          employees: data.employees,
-          attendance: data.attendance || [],
-          leaves: data.leaves || [],
-          lastSynced: data.lastSynced || '',
+      const res = await fetch('/api/attendance?dashboardOnly=true', { cache: 'no-store' });
+      const json = await res.json();
+      if (json.success) {
+        setDashboardData({
+          employeeStatuses: json.employeeStatuses || [],
+          deptData: json.deptData || [],
+          leaves: json.leaves || [],
         });
       }
     } catch (e) {
-      console.error('fetchTodayData error:', e);
+      console.error('fetchDashboardData error:', e);
     } finally {
-      setTodayLoading(false);
+      setDashboardLoading(false);
     }
   }, []);
 
-  // 월간 데이터 로드
+  // 월간 근태보고 데이터 로드
   const fetchMonthlyData = useCallback(async (m) => {
     setMonthlyLoading(true);
     try {
-      const res = await fetch(`/api/attendance/month?month=${m}`);
-      const data = await res.json();
-      if (data.employees) {
+      const res = await fetch(`/api/attendance?month=${m}`, { cache: 'no-store' });
+      const json = await res.json();
+      if (json.success) {
         setMonthlyData({
-          employees: data.employees,
-          attendance: data.attendance || [],
-          leaves: data.leaves || [],
+          employees: json.employees || [],
+          gridData: json.gridData || {},
+          leaves: json.leaves || [],
+          overrides: json.overrides || [],
         });
       }
     } catch (e) {
@@ -93,8 +96,8 @@ function DashboardContent() {
   }, []);
 
   useEffect(() => {
-    fetchTodayData();
-  }, [fetchTodayData]);
+    fetchDashboardData();
+  }, [fetchDashboardData]);
 
   useEffect(() => {
     if (activeTab === 'MONTHLY') {
@@ -102,54 +105,64 @@ function DashboardContent() {
     }
   }, [activeTab, selectedMonth, fetchMonthlyData]);
 
+  // 부서 옵션 목록
+  const deptOptions = useMemo(() => {
+    const set = new Set();
+    set.add('ALL');
+    (dashboardData.employeeStatuses || []).forEach((e) => {
+      if (e.dept) set.add(e.dept);
+    });
+    return Array.from(set);
+  }, [dashboardData.employeeStatuses]);
+
+  const calendarEmployeeNameLookup = useMemo(() => {
+    const map = new Map();
+    (dashboardData.employeeStatuses || []).forEach((e) => {
+      if (e.empNo) map.set(e.empNo, e.name);
+    });
+    return map;
+  }, [dashboardData.employeeStatuses]);
+
   return (
-    <div className="app-layout">
-      <AppSidebar
-        activeTab={activeTab}
-        setActiveTab={setActiveTab}
-        theme={theme}
-        toggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-      />
-
-      <div className="main-content">
-        <header className="top-header">
-          <div className="header-left">
-            <h1 className="page-title">
-              {activeTab === 'DASHBOARD' ? '대시보드' : '월간 근태보고'}
-            </h1>
-          </div>
-          <div className="header-right">
-            <span className="clock-badge">{time}</span>
-          </div>
-        </header>
-
-        {activeTab === 'DASHBOARD' ? (
+    <div className="ga-theme" data-theme={theme}>
+      <AppSidebar activeTab={activeTab} />
+      <main className="main-content" style={{ flexGrow: 1, padding: '24px 32px', overflowY: 'auto' }}>
+        {activeTab === 'DASHBOARD' && (
           <DashboardTab
-            employees={todayData.employees}
-            todayAttendance={todayData.attendance}
-            todayLeaves={todayData.leaves}
-            loading={todayLoading}
-            onRefresh={fetchTodayData}
-            lastSynced={todayData.lastSynced}
-          />
-        ) : (
-          <MonthlyTab
-            employees={monthlyData.employees.length > 0 ? monthlyData.employees : todayData.employees}
-            monthlyAttendance={monthlyData.attendance}
-            monthlyLeaves={monthlyData.leaves}
-            selectedMonth={selectedMonth}
-            setSelectedMonth={setSelectedMonth}
-            loading={monthlyLoading}
+            data={dashboardData}
+            viewDeptFilter={viewDeptFilter}
+            setViewDeptFilter={setViewDeptFilter}
+            deptOptions={deptOptions}
+            calendarMonth={calendarMonth}
+            setCalendarMonth={setCalendarMonth}
+            selectedCalendarDate={selectedCalendarDate}
+            setSelectedCalendarDate={setSelectedCalendarDate}
+            visibleDashboardLeaves={dashboardData.leaves}
+            calendarEmployeeNameLookup={calendarEmployeeNameLookup}
+            time={time}
+            theme={theme}
+            toggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
           />
         )}
-      </div>
+
+        {activeTab === 'MONTHLY' && (
+          <MonthlyTab
+            monthlyLoading={monthlyLoading}
+            selectedMonth={selectedMonth}
+            setSelectedMonth={setSelectedMonth}
+            visibleMonthlyEmployees={monthlyData.employees}
+            monthlyData={monthlyData}
+            refreshData={() => fetchMonthlyData(selectedMonth)}
+          />
+        )}
+      </main>
     </div>
   );
 }
 
-export default function DashboardPage() {
+export default function HomePage() {
   return (
-    <Suspense fallback={<div style={{ padding: 30, color: 'var(--text-3)' }}>로딩 중...</div>}>
+    <Suspense fallback={<div className="loading-spinner">화면을 불러오는 중...</div>}>
       <DashboardContent />
     </Suspense>
   );

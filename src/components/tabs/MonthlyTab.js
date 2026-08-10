@@ -1,250 +1,305 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
-import {
-  CalendarDays,
-  Download,
-  Search,
-  Building2,
-  ChevronLeft,
-  ChevronRight,
-  TrendingUp,
-} from 'lucide-react';
-import { getCurrentMonthKey, matchesDeptFilter } from '../../lib/dashboardUtils';
-import { exportMonthlyReportToExcel } from '../../lib/excelUtils';
+import React, { memo, useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { RefreshCw, Download } from 'lucide-react';
+import MonthSearchPicker from '../MonthSearchPicker';
+import { getHolidayName, getLeaveMeta } from '../../lib/leaveRules';
+import { clampToHalfHourSteps, formatHalfHourSteps, getMonthRangeList, normalizeDeptName, normalizeEmpNoKey, formatTimeString } from '../../lib/dashboardUtils';
+import { MONTHLY_DEFAULT_NOTE, buildScheduleOverrideMap, resolveSchedulePairForDate } from '../../lib/scheduleResolver';
+import useHolidayCalendar from '../../lib/useHolidayCalendar';
+import { getKstDateKey, shiftMonthKey } from '../../lib/kstDate';
+import { toMinutes, getAdjustmentMinutes } from '../../lib/scheduleUtils';
+import * as XLSX from 'xlsx';
 
-export default function MonthlyTab({
-  employees = [],
-  monthlyAttendance = [],
-  monthlyLeaves = [],
-  selectedMonth = getCurrentMonthKey(),
-  setSelectedMonth = () => {},
-  loading = false,
+const getLeaveVariantClass = (meta) => {
+  return String(meta?.variantClassName || '').trim();
+};
+
+const getDaysInMonth = (yearMonthStr) => {
+  if (!yearMonthStr) return [];
+  const [year, month] = yearMonthStr.split('-').map(Number);
+  const date = new Date(year, month - 1, 1);
+  const days = [];
+  while (date.getMonth() === month - 1) {
+    const dayNum = date.getDate();
+    const dayOfWeek = date.toLocaleDateString('ko-KR', { weekday: 'short' });
+    days.push({
+      dateStr: `${year}-${String(month).padStart(2, '0')}-${String(dayNum).padStart(2, '0')}`,
+      formatted: `${month}/${dayNum}(${dayOfWeek})`,
+      dayOfWeek,
+      dayNum,
+    });
+    date.setDate(date.getDate() + 1);
+  }
+  return days;
+};
+
+function MonthlyTab({
+  monthlyLoading = false,
+  selectedMonth,
+  setSelectedMonth,
+  visibleMonthlyEmployees = [],
+  monthlyData = {},
+  refreshData = () => {},
 }) {
-  const [deptFilter, setDeptFilter] = useState('ALL');
-  const [searchQuery, setSearchQuery] = useState('');
+  const monthOptions = useMemo(() => getMonthRangeList(240, 240), []);
+  useHolidayCalendar(selectedMonth);
+  useHolidayCalendar(shiftMonthKey(selectedMonth, -1));
+  useHolidayCalendar(shiftMonthKey(selectedMonth, 1));
 
-  // 1. 월 이전/다음 변경
-  const handlePrevMonth = () => {
-    const [y, m] = selectedMonth.split('-').map(Number);
-    const prev = new Date(y, m - 2, 1);
-    setSelectedMonth(`${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, '0')}`);
-  };
-
-  const handleNextMonth = () => {
-    const [y, m] = selectedMonth.split('-').map(Number);
-    const next = new Date(y, m, 1);
-    setSelectedMonth(`${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}`);
-  };
-
-  // 2. 부서 목록
-  const deptList = useMemo(() => {
-    const set = new Set(employees.map((e) => e.dept).filter(Boolean));
-    return ['ALL', ...Array.from(set)];
-  }, [employees]);
-
-  // 3. 월간 데이터 집계
-  const monthlyStats = useMemo(() => {
-    // 직원별 날짜별 출입 기록 그룹화
-    const empDailyLogs = new Map(); // key: `${empNo}_${dateStr}`
-    monthlyAttendance.forEach((att) => {
-      if (!att.emp_no || !att.a_time) return;
-      const dateStr = att.a_time.slice(0, 8);
-      const key = `${att.emp_no}_${dateStr}`;
-      if (!empDailyLogs.has(key)) {
-        empDailyLogs.set(key, []);
-      }
-      empDailyLogs.get(key).push(att.a_time);
-    });
-
-    // 직원별 연차 사용 집계
-    const leaveDaysMap = new Map();
-    monthlyLeaves.forEach((leave) => {
-      if (!leave.emp_no) return;
-      const days = parseFloat(leave.leave_days || 1);
-      leaveDaysMap.set(leave.emp_no, (leaveDaysMap.get(leave.emp_no) || 0) + days);
-    });
-
-    const result = {};
-
-    employees.forEach((emp) => {
-      let workDays = 0;
-      let totalWorkMinutes = 0;
-      let lateCount = 0;
-      let earlyLeaveCount = 0;
-
-      // 해당 직원의 모든 날짜 계산
-      empDailyLogs.forEach((times, key) => {
-        if (!key.startsWith(`${emp.emp_no}_`)) return;
-        workDays++;
-        const sorted = [...times].sort();
-        const first = sorted[0];
-        const last = sorted[sorted.length - 1];
-
-        // 지각 체크 (09:05 이후)
-        const inTime = first.slice(8, 12);
-        if (parseInt(inTime, 10) > 905) {
-          lateCount++;
-        }
-
-        // 근무시간 계산 (최초 ~ 최종)
-        if (sorted.length > 1) {
-          const inH = parseInt(first.slice(8, 10), 10);
-          const inM = parseInt(first.slice(10, 12), 10);
-          const outH = parseInt(last.slice(8, 10), 10);
-          const outM = parseInt(last.slice(10, 12), 10);
-
-          let diffM = (outH * 60 + outM) - (inH * 60 + inM);
-          if (diffM > 60) diffM -= 60; // 점심시간 1시간 제외
-          if (diffM > 0) totalWorkMinutes += diffM;
-
-          // 조퇴 체크 (18:00 이전 퇴근)
-          if (parseInt(last.slice(8, 12), 10) < 1800) {
-            earlyLeaveCount++;
-          }
-        } else {
-          totalWorkMinutes += 8 * 60; // 단일 태그는 기본 8시간 기준 적용
-        }
-      });
-
-      result[emp.emp_no] = {
-        workDays,
-        totalWorkHours: (totalWorkMinutes / 60).toFixed(1),
-        lateCount,
-        earlyLeaveCount,
-        leaveDays: leaveDaysMap.get(emp.emp_no) || 0,
-      };
-    });
-
-    return result;
-  }, [employees, monthlyAttendance, monthlyLeaves]);
-
-  // 4. 필터링된 임직원 목록
-  const filteredEmployees = useMemo(() => {
-    return employees.filter((emp) => {
-      const matchesDept = matchesDeptFilter(emp.dept, deptFilter);
-      const matchesSearch = !searchQuery ||
-        emp.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        emp.emp_no.includes(searchQuery);
-      return matchesDept && matchesSearch;
-    });
-  }, [employees, deptFilter, searchQuery]);
+  const days = useMemo(() => getDaysInMonth(selectedMonth), [selectedMonth]);
+  const todayStr = getKstDateKey();
+  const tableScrollRef = useRef(null);
+  const todayHeaderRef = useRef(null);
+  const allEmps = visibleMonthlyEmployees;
+  const gridData = monthlyData?.gridData || {};
+  const overrideLookup = useMemo(() => buildScheduleOverrideMap(monthlyData?.overrides || []), [monthlyData?.overrides]);
 
   const handleExportExcel = () => {
-    exportMonthlyReportToExcel(selectedMonth, filteredEmployees, monthlyStats);
+    try {
+      const headers = ['사번', '이름', '부서', ...days.map((d) => `${d.dayNum}일(${d.dayOfWeek})`)];
+      const rows = allEmps.map((emp) => {
+        const row = [emp.empNo || emp.emp_no, emp.name, emp.dept];
+        days.forEach((d) => {
+          const dateCompact = d.dateStr.replace(/-/g, '');
+          const leave = (monthlyData?.leaves || []).find(
+            (l) => normalizeEmpNoKey(l.empNo) === normalizeEmpNoKey(emp.empNo) && dateCompact >= l.startDate && dateCompact <= l.endDate
+          );
+          const dayStats = gridData[emp.empNo]?.[d.dateStr];
+          if (leave) {
+            row.push(leave.leaveName || '휴가');
+          } else if (dayStats?.in || dayStats?.out) {
+            row.push(`${dayStats.in || '-'} ~ ${dayStats.out || '-'}`);
+          } else {
+            row.push('-');
+          }
+        });
+        return row;
+      });
+
+      const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, `${selectedMonth} 근태현황`);
+      XLSX.writeFile(wb, `월간근태현황_${selectedMonth}.xlsx`);
+    } catch (e) {
+      alert('엑셀 다운로드 실패: ' + e.message);
+    }
   };
 
   return (
-    <div className="page-container">
-      {/* 상단 컨트롤 바 */}
-      <div className="filter-bar">
-        <div className="filter-group">
-          <button type="button" className="btn btn-secondary" onClick={handlePrevMonth}>
-            <ChevronLeft size={16} />
-          </button>
-          <span style={{ fontSize: 16, fontWeight: 700, fontFamily: 'var(--mono)', color: 'var(--blue)' }}>
-            {selectedMonth}
-          </span>
-          <button type="button" className="btn btn-secondary" onClick={handleNextMonth}>
-            <ChevronRight size={16} />
-          </button>
-
-          <Building2 size={16} style={{ color: 'var(--text-3)', marginLeft: 12 }} />
-          <select
-            className="select"
-            value={deptFilter}
-            onChange={(e) => setDeptFilter(e.target.value)}
-          >
-            {deptList.map((d) => (
-              <option key={d} value={d}>{d === 'ALL' ? '전체 부서' : d}</option>
-            ))}
-          </select>
-
-          <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
-            <Search size={15} style={{ position: 'absolute', left: 10, color: 'var(--text-3)' }} />
-            <input
-              type="text"
-              className="input"
-              style={{ paddingLeft: 32, width: 200 }}
-              placeholder="이름/사번 검색"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
-          </div>
+    <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+      <div className="card-header" style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', flexWrap: 'wrap', gap: '12px' }}>
+        <div>
+          <h3 className="card-title">월간 출근 현황표</h3>
+          <p className="card-subtitle">선택 월의 일자별 임직원 출퇴근 상세 데이터 그리드</p>
         </div>
 
-        <button type="button" className="btn btn-primary" onClick={handleExportExcel}>
-          <Download size={15} />
-          <span>엑셀 다운로드</span>
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginLeft: 'auto' }}>
+          <MonthSearchPicker
+            label="선택 월"
+            value={selectedMonth}
+            onChange={setSelectedMonth}
+            monthOptions={monthOptions}
+            onPrev={() => {
+              const idx = monthOptions.indexOf(selectedMonth);
+              setSelectedMonth(monthOptions[Math.max(idx - 1, 0)] || selectedMonth);
+            }}
+            onNext={() => {
+              const idx = monthOptions.indexOf(selectedMonth);
+              setSelectedMonth(monthOptions[Math.min(idx + 1, monthOptions.length - 1)] || selectedMonth);
+            }}
+            placeholder="YYYY-MM 검색"
+          />
+
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={handleExportExcel}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 14px', borderRadius: 8, fontSize: 13, fontWeight: 600 }}
+          >
+            <Download size={15} />
+            엑셀 다운로드
+          </button>
+        </div>
       </div>
 
-      {/* 월간 근태 보고서 테이블 */}
-      <div className="card">
-        <div className="card-header">
-          <div className="card-title">
-            <CalendarDays size={18} style={{ color: 'var(--blue)' }} />
-            <span>{selectedMonth} 월간 근태 집계 현황</span>
-            <span className="badge badge-blue">{filteredEmployees.length}명</span>
-          </div>
+      {monthlyLoading ? (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 360, flexDirection: 'column', gap: '12px' }}>
+          <RefreshCw style={{ width: 26, height: 26, color: 'var(--blue)', animation: 'spin 1s linear infinite' }} />
+          <span style={{ fontSize: 14, color: 'var(--text-2)' }}>월간 보고서를 구성 중입니다...</span>
         </div>
-
-        <div className="table-wrapper">
-          <table className="custom-table">
-            <thead>
+      ) : (
+        <div
+          className="table-wrapper"
+          ref={tableScrollRef}
+          style={{ maxHeight: '720px', overflow: 'auto', outline: 'none' }}
+        >
+          <table className="table" style={{ borderCollapse: 'separate', borderSpacing: 0, tableLayout: 'fixed', width: 'max-content', minWidth: '100%' }}>
+            <colgroup>
+              <col style={{ width: '130px' }} />
+              {days.map((d) => (
+                <col key={d.dateStr} style={{ width: '105px' }} />
+              ))}
+            </colgroup>
+            <thead style={{ position: 'sticky', top: 0, zIndex: 20, background: 'var(--bg-card)' }}>
               <tr>
-                <th>사번</th>
-                <th>이름</th>
-                <th>부서</th>
-                <th style={{ textAlign: 'right' }}>총 근무일수</th>
-                <th style={{ textAlign: 'right' }}>총 근무시간</th>
-                <th style={{ textAlign: 'center' }}>지각</th>
-                <th style={{ textAlign: 'center' }}>조퇴</th>
-                <th style={{ textAlign: 'center' }}>연차 사용</th>
+                <th
+                  style={{
+                    position: 'sticky',
+                    top: 0,
+                    left: 0,
+                    background: 'var(--bg-card)',
+                    zIndex: 30,
+                    minWidth: '130px',
+                    width: '130px',
+                    textAlign: 'center',
+                    boxShadow: '6px 0 14px -14px rgba(15, 23, 42, 0.28)',
+                    borderRight: '1px solid var(--border)',
+                  }}
+                >
+                  임직원
+                </th>
+                {days.map((d) => {
+                  const holidayName = getHolidayName(d.dateStr);
+                  const isWE = d.dayOfWeek === '일' || d.dayOfWeek === '토' || !!holidayName;
+                  const isTodayColumn = d.dateStr === todayStr;
+                  return (
+                    <th
+                      key={d.dateStr}
+                      ref={isTodayColumn ? todayHeaderRef : null}
+                      style={{
+                        minWidth: '105px',
+                        textAlign: 'center',
+                        color: d.dayOfWeek === '일' || !!holidayName ? 'var(--red)' : d.dayOfWeek === '토' ? 'var(--blue)' : 'var(--text-1)',
+                        background: isTodayColumn
+                          ? 'linear-gradient(180deg, rgba(59, 130, 246, 0.18), rgba(59, 130, 246, 0.08))'
+                          : isWE
+                            ? 'rgba(239, 68, 68, 0.04)'
+                            : 'transparent',
+                        position: 'sticky',
+                        top: 0,
+                        zIndex: isTodayColumn ? 24 : 21,
+                        boxShadow: isTodayColumn ? 'inset 0 0 0 1px rgba(59, 130, 246, 0.38)' : undefined,
+                        borderRadius: isTodayColumn ? '8px 8px 0 0' : undefined,
+                      }}
+                    >
+                      {d.formatted.split('(')[0]}<br />
+                      <small style={{ opacity: 0.8 }}>({d.dayOfWeek})</small>
+                      {holidayName && (
+                        <div style={{ fontSize: '10px', fontWeight: 700, color: 'var(--red)', marginTop: '2px', lineHeight: 1.2 }}>
+                          {holidayName}
+                        </div>
+                      )}
+                    </th>
+                  );
+                })}
               </tr>
             </thead>
             <tbody>
-              {filteredEmployees.length === 0 ? (
+              {allEmps.length === 0 ? (
                 <tr>
-                  <td colSpan={8} style={{ textAlign: 'center', padding: '36px', color: 'var(--text-3)' }}>
-                    조회된 월간 근태 데이터가 없습니다.
+                  <td colSpan={days.length + 1} style={{ textAlign: 'center', padding: '60px 16px', color: 'var(--text-3)' }}>
+                    조회할 임직원 데이터가 없습니다.
                   </td>
                 </tr>
               ) : (
-                filteredEmployees.map((emp) => {
-                  const stat = monthlyStats[emp.emp_no] || {};
+                allEmps.map((emp) => {
+                  const empKey = normalizeEmpNoKey(emp.empNo || emp.emp_no);
                   return (
-                    <tr key={emp.emp_no}>
-                      <td style={{ fontFamily: 'var(--mono)', fontWeight: 600 }}>{emp.emp_no}</td>
-                      <td style={{ fontWeight: 600 }}>{emp.name}</td>
-                      <td style={{ color: 'var(--text-2)' }}>{emp.dept || '-'}</td>
-                      <td style={{ textAlign: 'right', fontFamily: 'var(--mono)' }}>
-                        {stat.workDays || 0}일
+                    <tr key={emp.empNo || emp.emp_no}>
+                      <td
+                        style={{
+                          position: 'sticky',
+                          left: 0,
+                          background: 'var(--bg-card)',
+                          zIndex: 12,
+                          fontWeight: 700,
+                          borderRight: '1px solid var(--border)',
+                          boxShadow: '6px 0 14px -14px rgba(15, 23, 42, 0.28)',
+                          padding: '10px 8px',
+                          textAlign: 'center',
+                        }}
+                      >
+                        <div style={{ display: 'grid', justifyItems: 'center', gap: '2px', lineHeight: 1.15 }}>
+                          <span style={{ color: 'var(--text-1)', fontSize: 13.5, fontWeight: 700 }}>{emp.name}</span>
+                          <small style={{ color: 'var(--text-2)', fontWeight: 500, fontSize: 11.5 }}>({emp.dept})</small>
+                        </div>
                       </td>
-                      <td style={{ textAlign: 'right', fontFamily: 'var(--mono)', fontWeight: 600, color: 'var(--blue)' }}>
-                        {stat.totalWorkHours || '0.0'}시간
-                      </td>
-                      <td style={{ textAlign: 'center' }}>
-                        {stat.lateCount > 0 ? (
-                          <span className="badge badge-amber">{stat.lateCount}회</span>
-                        ) : (
-                          <span style={{ color: 'var(--text-3)' }}>-</span>
-                        )}
-                      </td>
-                      <td style={{ textAlign: 'center' }}>
-                        {stat.earlyLeaveCount > 0 ? (
-                          <span className="badge badge-red">{stat.earlyLeaveCount}회</span>
-                        ) : (
-                          <span style={{ color: 'var(--text-3)' }}>-</span>
-                        )}
-                      </td>
-                      <td style={{ textAlign: 'center' }}>
-                        {stat.leaveDays > 0 ? (
-                          <span className="badge badge-purple">{stat.leaveDays}일</span>
-                        ) : (
-                          <span style={{ color: 'var(--text-3)' }}>-</span>
-                        )}
-                      </td>
+
+                      {days.map((d) => {
+                        const dayStats = gridData[emp.empNo || emp.emp_no]?.[d.dateStr];
+                        const holidayName = getHolidayName(d.dateStr);
+                        const isWE = d.dayOfWeek === '일' || d.dayOfWeek === '토' || !!holidayName;
+                        const isTodayColumn = d.dateStr === todayStr;
+
+                        const dateCompact = d.dateStr.replace(/-/g, '');
+                        const leave = (monthlyData?.leaves || []).find(
+                          (l) => normalizeEmpNoKey(l.empNo) === empKey && dateCompact >= l.startDate && dateCompact <= l.endDate
+                        );
+                        const leaveMeta = leave ? getLeaveMeta(leave, dayStats) : null;
+                        const inFormatted = formatTimeString(dayStats?.in, false);
+                        const outFormatted = formatTimeString(dayStats?.out, false);
+                        const timeText = inFormatted !== '-' || outFormatted !== '-' ? `${inFormatted !== '-' ? inFormatted : '-'}\n${outFormatted !== '-' ? outFormatted : '-'}` : '';
+
+                        return (
+                          <td
+                            key={d.dateStr}
+                            style={{
+                              textAlign: 'center',
+                              fontSize: '12px',
+                              whiteSpace: 'pre-line',
+                              padding: '8px 4px',
+                              background: isTodayColumn
+                                ? 'linear-gradient(180deg, rgba(59, 130, 246, 0.10), rgba(59, 130, 246, 0.04))'
+                                : dayStats?.isLate
+                                  ? 'rgba(245, 158, 11, 0.12)'
+                                  : isWE
+                                    ? 'rgba(239, 68, 68, 0.04)'
+                                    : 'transparent',
+                              color: dayStats?.isLate ? 'var(--amber)' : 'var(--text-1)',
+                              boxShadow: isTodayColumn ? 'inset 0 0 0 1px rgba(59, 130, 246, 0.26)' : undefined,
+                            }}
+                          >
+                            {leave ? (
+                              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px' }}>
+                                <span
+                                  className={`calendar-detail__name-chip ${getLeaveVariantClass(leaveMeta)}`.trim()}
+                                  style={{
+                                    display: 'block',
+                                    maxWidth: '100%',
+                                    paddingInline: 8,
+                                    paddingBlock: 3,
+                                    borderRadius: '999px',
+                                    background: leaveMeta.bg,
+                                    color: leaveMeta.color,
+                                    border: '1px solid',
+                                    borderColor: leaveMeta.border || 'transparent',
+                                    whiteSpace: 'nowrap',
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    fontWeight: 600,
+                                    fontSize: 9.5,
+                                    lineHeight: 1.1,
+                                  }}
+                                >
+                                  {leaveMeta.label}
+                                </span>
+                                {timeText ? (
+                                  <span style={{ fontSize: '11px', color: dayStats?.isLate ? 'var(--amber)' : 'var(--text-1)', fontWeight: 600, lineHeight: 1.25 }}>
+                                    {timeText}
+                                  </span>
+                                ) : null}
+                              </div>
+                            ) : timeText ? (
+                              <span style={{ fontSize: '11.5px', color: dayStats?.isLate ? 'var(--amber)' : 'var(--text-1)', fontWeight: 600, lineHeight: 1.3 }}>
+                                {timeText}
+                              </span>
+                            ) : (
+                              <span style={{ color: 'var(--text-3)', fontSize: '12px', opacity: 0.4 }}>-</span>
+                            )}
+                          </td>
+                        );
+                      })}
                     </tr>
                   );
                 })
@@ -252,7 +307,9 @@ export default function MonthlyTab({
             </tbody>
           </table>
         </div>
-      </div>
+      )}
     </div>
   );
 }
+
+export default memo(MonthlyTab);
