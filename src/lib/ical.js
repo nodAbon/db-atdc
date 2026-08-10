@@ -4,14 +4,24 @@ export function normalizeDeptName(dept = '') {
   return String(dept || '').trim().replace(/\s+/g, '');
 }
 
-export function addDaysToDateStr(dateStr, days) {
-  const [year, month, day] = dateStr.split('-').map(Number);
+export function normalizeDateStringToDash(dateStr = '') {
+  const digits = String(dateStr || '').replace(/\D/g, '');
+  if (digits.length >= 8) {
+    return `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6, 8)}`;
+  }
+  return String(dateStr || '');
+}
+
+export function addDaysToDateStr(dateStr, days = 1) {
+  const normalized = normalizeDateStringToDash(dateStr);
+  const [year, month, day] = normalized.split('-').map(Number);
+  if (!year || !month || !day) return normalized;
   const d = new Date(Date.UTC(year, month - 1, day + days));
   return d.toISOString().split('T')[0];
 }
 
 function formatDateToICS(dateStr) {
-  return String(dateStr).replace(/-/g, '');
+  return String(dateStr || '').replace(/\D/g, '').slice(0, 8);
 }
 
 function escapeICSText(text = '') {
@@ -44,12 +54,16 @@ export function buildICS({
   ].filter(Boolean);
 
   events.forEach((event) => {
+    const startICS = formatDateToICS(event.startDate);
+    const endICS = formatDateToICS(event.endDate);
+    if (!startICS || !endICS) return;
+
     lines.push(
       'BEGIN:VEVENT',
       `UID:${event.uid}`,
       `DTSTAMP:${now}`,
-      `DTSTART;VALUE=DATE:${formatDateToICS(event.startDate)}`,
-      `DTEND;VALUE=DATE:${formatDateToICS(event.endDate)}`,
+      `DTSTART;VALUE=DATE:${startICS}`,
+      `DTEND;VALUE=DATE:${endICS}`,
       `SUMMARY:${escapeICSText(event.summary)}`,
       event.description ? `DESCRIPTION:${escapeICSText(event.description)}` : null,
       'STATUS:CONFIRMED',

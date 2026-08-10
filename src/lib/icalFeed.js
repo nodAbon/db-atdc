@@ -4,6 +4,7 @@ import {
   addDaysToDateStr,
   buildICS,
   normalizeDeptName,
+  normalizeDateStringToDash,
 } from './ical';
 import { getLeaveDisplayLabel } from './leaveRules';
 
@@ -55,17 +56,20 @@ export async function buildLeaveIcsForDepartments({
     });
   }
 
+  const fromRaw = window.from ? window.from.replace(/-/g, '') : '';
+  const toRaw = window.to ? window.to.replace(/-/g, '') : '';
+
   let query = supabaseAdmin
     .from('db_leaves')
     .select('emp_no, emp_name, start_date, end_date, leave_code, leave_name, leave_days, status')
     .eq('status', '40')
     .in('emp_no', targetEmpNos);
 
-  if (window.from) {
-    query = query.gte('end_date', window.from);
+  if (fromRaw) {
+    query = query.gte('end_date', fromRaw);
   }
-  if (window.to) {
-    query = query.lte('start_date', window.to);
+  if (toRaw) {
+    query = query.lte('start_date', toRaw);
   }
 
   const { data: leaves, error: leaveError } = await query;
@@ -83,8 +87,8 @@ export async function buildLeaveIcsForDepartments({
       const empName = leave.emp_name || emp?.name || String(leave.emp_no || '');
       const dept = emp?.dept || '';
       const leaveName = getLeaveDisplayLabel(leave) || leave.leave_name || '연차';
-      const startDate = String(leave.start_date).substring(0, 10);
-      const endDate = String(leave.end_date).substring(0, 10);
+      const startDate = normalizeDateStringToDash(leave.start_date);
+      const endDate = normalizeDateStringToDash(leave.end_date);
 
       return {
         uid: `leave-${leave.emp_no}-${startDate}-${endDate}-${leave.leave_code || '0'}@hecto-qnm`,
