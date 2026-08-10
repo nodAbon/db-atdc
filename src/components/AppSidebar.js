@@ -50,7 +50,7 @@ export default function AppSidebar({
                     }
                   }}
                 >
-                  <Icon size={18} style={{ color: isActive ? 'var(--blue)' : 'var(--text-3)' }} />
+                  <Icon size={18} style={item.iconStyle || { color: isActive ? 'var(--blue)' : 'var(--text-3)' }} />
                   <span>{item.label}</span>
                 </Link>
               );
