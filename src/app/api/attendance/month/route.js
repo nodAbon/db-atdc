@@ -56,8 +56,10 @@ export async function GET(request) {
     if (attRes.error) throw attRes.error;
     if (leaveRes.error) throw leaveRes.error;
 
+    const resolvedMonth = `${yearStr}-${String(monthStr).padStart(2, '0')}`;
+
     return NextResponse.json({
-      month,
+      month: resolvedMonth,
       employees: empRes.data || [],
       attendance: attRes.data || [],
       leaves: leaveRes.data || [],

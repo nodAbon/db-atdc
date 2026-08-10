@@ -73,9 +73,9 @@ export async function fetchAttendanceLogs(month, { dashboardOnly = false, exclud
       empQuery,
       logQuery || Promise.resolve({ data: [] }),
       leaveQuery,
-      supabaseAdmin.from('db_attendance_corrections').select('*').catch(() => ({ data: [] })),
-      supabaseAdmin.from('db_schedule_overrides').select('*').catch(() => ({ data: [] })),
-      supabaseAdmin.from('db_attendance_log_adjustments').select('*').catch(() => ({ data: [] })),
+      supabaseAdmin.from('db_attendance_corrections').select('*'),
+      supabaseAdmin.from('db_schedule_overrides').select('*'),
+      supabaseAdmin.from('db_attendance_log_adjustments').select('*'),
     ]);
 
     if (empRes.error) throw empRes.error;
