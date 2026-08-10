@@ -66,28 +66,26 @@ function LoginForm() {
           background: 'var(--bg-card)',
         }}
       >
-        {/* Brand Header */}
-        <div style={{ textAlign: 'center', marginBottom: 28 }}>
-          <div
-            style={{
-              width: 52,
-              height: 52,
-              borderRadius: 14,
-              background: 'linear-gradient(135deg, var(--blue), var(--purple))',
-              color: '#ffffff',
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontWeight: 800,
-              fontSize: 20,
-              boxShadow: '0 8px 20px rgba(91, 136, 214, 0.3)',
-              marginBottom: 14,
-            }}
-          >
-            H
+        {/* Brand Header with CI Logo */}
+        <div style={{ textAlign: 'center', marginBottom: 28, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+          <div style={{ marginBottom: 12 }}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/logo-dark.png"
+              alt="DREAMBAY"
+              className="brand-logo-img brand-logo-dark"
+              style={{ height: '42px', width: 'auto', objectFit: 'contain' }}
+            />
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/logo-light.png"
+              alt="DREAMBAY"
+              className="brand-logo-img brand-logo-light"
+              style={{ height: '42px', width: 'auto', objectFit: 'contain' }}
+            />
           </div>
           <h2 style={{ fontSize: 20, fontWeight: 800, color: 'var(--text-1)', margin: 0, letterSpacing: -0.5 }}>
-            HECTO 근태관리시스템
+            근태관리 시스템
           </h2>
           <p style={{ fontSize: 13, color: 'var(--text-3)', marginTop: 6 }}>
             서비스 이용을 위해 로그인해 주세요.

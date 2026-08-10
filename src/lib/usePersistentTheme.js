@@ -7,7 +7,7 @@ export function usePersistentTheme(defaultTheme = 'light') {
 
   useEffect(() => {
     try {
-      const saved = localStorage.getItem('db_atdc_theme');
+      const saved = localStorage.getItem('db_atdc_theme') || localStorage.getItem('theme') || defaultTheme;
       if (saved === 'dark') {
         setThemeState('dark');
         document.documentElement.setAttribute('data-theme', 'dark');
@@ -18,13 +18,15 @@ export function usePersistentTheme(defaultTheme = 'light') {
     } catch {
       document.documentElement.setAttribute('data-theme', 'light');
     }
-  }, []);
+  }, [defaultTheme]);
 
   const setTheme = (nextTheme) => {
-    setThemeState(nextTheme);
+    const value = typeof nextTheme === 'function' ? nextTheme(theme) : nextTheme;
+    setThemeState(value);
     try {
-      localStorage.setItem('db_atdc_theme', nextTheme);
-      document.documentElement.setAttribute('data-theme', nextTheme);
+      localStorage.setItem('db_atdc_theme', value);
+      localStorage.setItem('theme', value);
+      document.documentElement.setAttribute('data-theme', value);
     } catch (e) {
       console.error(e);
     }

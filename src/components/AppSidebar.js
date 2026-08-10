@@ -67,14 +67,23 @@ export default function AppSidebar({
 
   return (
     <aside className="sidebar">
-      {/* Brand Header */}
-      <div className="brand">
-        <div className="brand-badge">DB</div>
-        <div className="brand-text">
-          <span className="brand-title">db-atdc</span>
-          <span className="brand-subtitle">근태관리 시스템</span>
-        </div>
-      </div>
+      {/* Brand Header with CI Logo */}
+      <Link href="/" className="brand" style={{ padding: '8px 10px', display: 'flex', alignItems: 'center', justifyContent: 'flex-start' }}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/logo-dark.png"
+          alt="DREAMBAY"
+          className="brand-logo-img brand-logo-dark"
+          style={{ height: '34px', width: 'auto', objectFit: 'contain' }}
+        />
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/logo-light.png"
+          alt="DREAMBAY"
+          className="brand-logo-img brand-logo-light"
+          style={{ height: '34px', width: 'auto', objectFit: 'contain' }}
+        />
+      </Link>
 
       {/* Navigation */}
       <nav className="tab-menu">
