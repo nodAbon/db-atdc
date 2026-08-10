@@ -45,7 +45,7 @@ function isLeaveStatus(emp) {
   );
 }
 
-function StatCard({ label, value, colorClass, active, onClick }) {
+function StatCard({ label, value, colorClass, active, onClick, loading = false }) {
   return (
     <button
       type="button"
@@ -62,8 +62,14 @@ function StatCard({ label, value, colorClass, active, onClick }) {
     >
       <div className="kpi-label">{label}</div>
       <div className={`kpi-value kpi-value--${colorClass}`} style={{ marginTop: '8px' }}>
-        {value}
-        <small style={{ fontSize: 13, color: 'var(--text-3)' }}>명</small>
+        {loading ? (
+          <span style={{ display: 'inline-block', width: 36, height: 32, borderRadius: 6, background: 'var(--border-soft)', opacity: 0.6, animation: 'pulse 1.5s infinite ease-in-out' }} />
+        ) : (
+          <>
+            {value}
+            <small style={{ fontSize: 13, color: 'var(--text-3)' }}>명</small>
+          </>
+        )}
       </div>
     </button>
   );
@@ -89,6 +95,7 @@ function getAvatarTone(seed) {
 
 function DashboardTab({
   data,
+  loading = false,
   viewDeptFilter = 'ALL',
   myDept = '전체 부서',
   calendarMonth,
@@ -246,6 +253,7 @@ function DashboardTab({
           colorClass="blue"
           active={statusFilter === 'ALL'}
           onClick={() => setStatusFilter('ALL')}
+          loading={loading}
         />
         <StatCard
           label="오늘 정상 근무"
@@ -253,6 +261,7 @@ function DashboardTab({
           colorClass="green"
           active={statusFilter === 'PRESENT'}
           onClick={() => setStatusFilter('PRESENT')}
+          loading={loading}
         />
         <StatCard
           label="오늘 지각 발생"
@@ -260,6 +269,7 @@ function DashboardTab({
           colorClass="amber"
           active={statusFilter === 'LATE'}
           onClick={() => setStatusFilter('LATE')}
+          loading={loading}
         />
         <StatCard
           label="오늘 휴가/연차"
@@ -267,6 +277,7 @@ function DashboardTab({
           colorClass="purple"
           active={statusFilter === 'LEAVE'}
           onClick={() => setStatusFilter('LEAVE')}
+          loading={loading}
         />
       </div>
 
@@ -309,7 +320,25 @@ function DashboardTab({
                 </tr>
               </thead>
               <tbody>
-                {deptGroups.length === 0 ? (
+                {loading ? (
+                  Array.from({ length: 6 }).map((_, idx) => (
+                    <tr key={`skel-row-${idx}`}>
+                      <td style={{ padding: '12px 14px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <div style={{ width: 32, height: 32, borderRadius: 10, background: 'var(--border-soft)', opacity: 0.6, animation: 'pulse 1.5s infinite ease-in-out' }} />
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                            <div style={{ width: 55, height: 13, borderRadius: 4, background: 'var(--border-soft)', opacity: 0.6, animation: 'pulse 1.5s infinite ease-in-out' }} />
+                            <div style={{ width: 45, height: 10, borderRadius: 4, background: 'var(--border-soft)', opacity: 0.4, animation: 'pulse 1.5s infinite ease-in-out' }} />
+                          </div>
+                        </div>
+                      </td>
+                      <td><div style={{ width: 60, height: 12, borderRadius: 4, background: 'var(--border-soft)', opacity: 0.5, animation: 'pulse 1.5s infinite ease-in-out' }} /></td>
+                      <td><div style={{ width: 40, height: 12, borderRadius: 4, background: 'var(--border-soft)', opacity: 0.5, animation: 'pulse 1.5s infinite ease-in-out' }} /></td>
+                      <td><div style={{ width: 40, height: 12, borderRadius: 4, background: 'var(--border-soft)', opacity: 0.5, animation: 'pulse 1.5s infinite ease-in-out' }} /></td>
+                      <td><div style={{ width: 50, height: 22, borderRadius: 6, background: 'var(--border-soft)', opacity: 0.5, animation: 'pulse 1.5s infinite ease-in-out' }} /></td>
+                    </tr>
+                  ))
+                ) : deptGroups.length === 0 ? (
                   <tr>
                     <td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-3)', padding: '40px 16px' }}>
                       조건에 맞는 직원이 없습니다.
@@ -403,7 +432,17 @@ function DashboardTab({
             </div>
 
             <div style={{ display: 'grid', gap: 12 }}>
-              {deptDistribution.length === 0 ? (
+              {loading ? (
+                Array.from({ length: 4 }).map((_, idx) => (
+                  <div key={`dept-skel-${idx}`} style={{ display: 'grid', gap: 6 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <div style={{ width: 80, height: 13, borderRadius: 4, background: 'var(--border-soft)', opacity: 0.5, animation: 'pulse 1.5s infinite ease-in-out' }} />
+                      <div style={{ width: 40, height: 12, borderRadius: 4, background: 'var(--border-soft)', opacity: 0.4, animation: 'pulse 1.5s infinite ease-in-out' }} />
+                    </div>
+                    <div style={{ height: 6, borderRadius: 999, background: 'var(--border-soft)', opacity: 0.5, animation: 'pulse 1.5s infinite ease-in-out' }} />
+                  </div>
+                ))
+              ) : deptDistribution.length === 0 ? (
                 <div style={{ color: 'var(--text-3)', fontSize: 13, padding: '10px 2px' }}>
                   표시할 부서 정보가 없습니다.
                 </div>

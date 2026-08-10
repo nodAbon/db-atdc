@@ -224,15 +224,18 @@ export async function GET(request) {
 
     const deptData = Array.from(deptMap.values());
 
+    const formattedEmployees = employees.map((e) => ({
+      empNo: e.emp_no,
+      name: e.name,
+      dept: e.dept,
+      scheduleTime: employeeScheduleMap.get(normalizeEmpNoKey(e.emp_no))?.start || '09:00',
+      scheduleEndTime: employeeScheduleMap.get(normalizeEmpNoKey(e.emp_no))?.end || '18:00',
+    }));
+
     return NextResponse.json({
       success: true,
-      employees: employees.map((e) => ({
-        empNo: e.emp_no,
-        name: e.name,
-        dept: e.dept,
-        scheduleTime: employeeScheduleMap.get(normalizeEmpNoKey(e.emp_no))?.start || '09:00',
-        scheduleEndTime: employeeScheduleMap.get(normalizeEmpNoKey(e.emp_no))?.end || '18:00',
-      })),
+      employees: formattedEmployees,
+      allEmployees: formattedEmployees,
       employeeStatuses,
       gridData,
       deptData,

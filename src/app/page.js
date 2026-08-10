@@ -130,6 +130,7 @@ function DashboardContent() {
         {activeTab === 'DASHBOARD' && (
           <DashboardTab
             data={dashboardData}
+            loading={dashboardLoading}
             viewDeptFilter={viewDeptFilter}
             setViewDeptFilter={setViewDeptFilter}
             deptOptions={deptOptions}

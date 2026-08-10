@@ -96,7 +96,7 @@ function LoginForm() {
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <div>
             <label style={{ display: 'block', fontSize: 12.5, fontWeight: 700, color: 'var(--text-2)', marginBottom: 6 }}>
-              아이디 (사번)
+              아이디
             </label>
             <div style={{ position: 'relative' }}>
               <User size={16} style={{ position: 'absolute', left: 12, top: 12, color: 'var(--text-3)' }} />
@@ -104,7 +104,7 @@ function LoginForm() {
                 type="text"
                 value={identifier}
                 onChange={(e) => setIdentifier(e.target.value)}
-                placeholder="사번 또는 아이디 입력"
+                placeholder="아이디 입력"
                 required
                 autoComplete="username"
                 className="form-input"
