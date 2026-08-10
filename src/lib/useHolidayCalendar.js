@@ -19,7 +19,7 @@ async function fetchHolidayYear(year) {
   if (!year || hasHolidayYearCache(year)) return;
   if (pendingYearRequests.has(year)) return pendingYearRequests.get(year);
 
-  const request = fetch(`/api/holidays/${year}`, { cache: 'no-store' })
+  const request = fetch(`/api/holidays/${year}`)
     .then(async (response) => {
       const json = await response.json().catch(() => ({}));
       if (!response.ok) {

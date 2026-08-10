@@ -58,7 +58,7 @@ function DashboardContent() {
   const fetchDashboardData = useCallback(async () => {
     setDashboardLoading(true);
     try {
-      const res = await fetch('/api/attendance?dashboardOnly=true', { cache: 'no-store' });
+      const res = await fetch('/api/attendance?dashboardOnly=true');
       const json = await res.json();
       if (json.success) {
         setDashboardData({
@@ -78,7 +78,7 @@ function DashboardContent() {
   const fetchMonthlyData = useCallback(async (m) => {
     setMonthlyLoading(true);
     try {
-      const res = await fetch(`/api/attendance?month=${m}`, { cache: 'no-store' });
+      const res = await fetch(`/api/attendance?month=${m}`);
       const json = await res.json();
       if (json.success) {
         setMonthlyData({

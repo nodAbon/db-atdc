@@ -239,6 +239,10 @@ export async function GET(request) {
       leaves,
       overrides,
       allLogs: parsedLogs,
+    }, {
+      headers: {
+        'Cache-Control': 'public, s-maxage=3, stale-while-revalidate=15',
+      },
     });
   } catch (error) {
     console.error('attendance API error:', error);

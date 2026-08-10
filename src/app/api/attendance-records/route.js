@@ -27,7 +27,10 @@ export async function GET(request) {
     const to = parseDateInput(searchParams.get('to') || searchParams.get('date'), today);
     const dept = searchParams.get('dept') || 'ALL';
 
-    // 1. 직원 목록 조회
+    const fromTime = `${from.replace(/-/g, '')}000000`;
+    const toTime = `${shiftKstDateKey(to, 1).replace(/-/g, '')}060000`;
+
+    // 1. 직원 목록 쿼리 준비
     let empQuery = supabaseAdmin
       .from('db_employees')
       .select('emp_no, name, dept, is_active')
@@ -39,37 +42,39 @@ export async function GET(request) {
       empQuery = empQuery.eq('dept', dept);
     }
 
-    const { data: employeeRows, error: empErr } = await empQuery;
-    if (empErr) throw empErr;
-
-    const empMap = new Map();
-    (employeeRows || []).forEach((e) => {
-      empMap.set(String(e.emp_no), e);
-      empMap.set(`1700${e.emp_no}`, e);
-    });
-
-    // 2. 출입기록 조회 (날짜 범위)
-    const fromTime = `${from.replace(/-/g, '')}000000`;
-    const toTime = `${shiftKstDateKey(to, 1).replace(/-/g, '')}060000`;
-
+    // 2. 출입기록 쿼리 준비
     let logQuery = supabaseAdmin
       .from('db_attendance')
-      .select('*')
+      .select('id, emp_no, a_time, log_time, gate_name, sabun')
       .gte('a_time', fromTime)
       .lte('a_time', toTime)
       .order('a_time', { ascending: false });
 
-    // 개별 직원 필터링 (8자리 사번 또는 12자리 sabun 매칭)
     if (rawEmpNo && rawEmpNo !== 'ALL') {
       const cleanEmpNo = rawEmpNo.replace(/^1700/, '');
       const fullSabun = `1700${cleanEmpNo}`;
       logQuery = logQuery.or(`emp_no.eq.${cleanEmpNo},sabun.eq.${cleanEmpNo},emp_no.eq.${fullSabun},sabun.eq.${fullSabun}`);
     }
 
-    const { data: rawLogs, error: logErr } = await logQuery.limit(2000);
-    if (logErr) throw logErr;
+    // 병렬 실행으로 지연 시간 반토막 단축!
+    const [empRes, logRes] = await Promise.all([
+      empQuery,
+      logQuery.limit(2000),
+    ]);
 
-    const logs = (rawLogs || []).map((row) => {
+    if (empRes.error) throw empRes.error;
+    if (logRes.error) throw logRes.error;
+
+    const employeeRows = empRes.data || [];
+    const rawLogs = logRes.data || [];
+
+    const empMap = new Map();
+    employeeRows.forEach((e) => {
+      empMap.set(String(e.emp_no), e);
+      empMap.set(`1700${e.emp_no}`, e);
+    });
+
+    const logs = rawLogs.map((row) => {
       const formattedTime = formatAttendanceLogTime(row);
       const rawWorkDate = formattedTime.split(' ')[0] || from;
       const empInfo = empMap.get(String(row.emp_no)) || empMap.get(String(row.sabun));
@@ -78,7 +83,7 @@ export async function GET(request) {
         id: row.id,
         empNo: row.emp_no || row.sabun?.replace(/^1700/, ''),
         sabun: row.sabun,
-        name: empInfo?.name || row.name || '-',
+        name: empInfo?.name || '-',
         dept: empInfo?.dept || '-',
         logTime: formattedTime,
         a_time: row.a_time,
@@ -90,14 +95,18 @@ export async function GET(request) {
 
     return NextResponse.json({
       success: true,
-      employees: employeeRows || [],
+      employees: employeeRows,
       logs,
       from,
       to,
       selectedEmpNo: rawEmpNo,
+    }, {
+      headers: {
+        'Cache-Control': 'public, s-maxage=5, stale-while-revalidate=30',
+      },
     });
   } catch (error) {
     console.error('attendance-records GET error:', error);
-    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

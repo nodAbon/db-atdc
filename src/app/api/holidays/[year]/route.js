@@ -124,15 +124,14 @@ export async function GET(_request, context) {
       year,
       source,
       holidays,
+      count: Object.keys(holidays).length,
     }, {
       headers: {
-        'Cache-Control': 'no-store, max-age=0',
+        'Cache-Control': 'public, max-age=86400, s-maxage=86400, stale-while-revalidate=604800',
       },
     });
   } catch (error) {
-    console.error('[Holiday API]', error);
-    return NextResponse.json({
-      error: error?.message || '공휴일 정보를 불러오지 못했습니다.',
-    }, { status: 500 });
+    console.error('[Holiday API Error]', error);
+    return NextResponse.json({ error: error?.message || '공휴일 조회에 실패했습니다.' }, { status: 500 });
   }
 }
