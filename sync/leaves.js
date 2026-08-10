@@ -22,8 +22,8 @@ const MYSQL_CONFIG = {
 };
 
 const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY,
+  process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
   { auth: { autoRefreshToken: false, persistSession: false } }
 );
 
@@ -37,51 +37,61 @@ function normalizeEmpNo(value) {
 }
 
 async function syncLeaves(conn) {
-  const currentYear = new Date().getFullYear();
-  const fromDate = `${currentYear - 1}0101`;
+  const now = new Date();
+  const fromMonth = new Date(now.getFullYear(), now.getMonth() - 2, 1);
+  const fromStr = `${fromMonth.getFullYear()}${String(fromMonth.getMonth() + 1).padStart(2, '0')}01`;
 
   const [rows] = await conn.execute(`
     SELECT
-      u.I_EMPLOY_NO AS emp_no,
-      e.I_NAME      AS emp_name,
-      u.I_FROM_DATE AS start_date,
-      u.I_TO_DATE   AS end_date,
-      u.I_USE_CODE  AS leave_code,
-      u.I_USE_NAME  AS leave_name,
-      u.I_USE_DAYS  AS leave_days,
-      u.I_STATUS    AS status
-    FROM hr_yuncha_use u
-    INNER JOIN hr_employee e ON
-      e.I_COMPANY = u.I_COMPANY
-      AND e.I_EMPLOY_NO = u.I_EMPLOY_NO
-    WHERE u.I_COMPANY = ?
-      AND u.I_FROM_DATE >= ?
-      AND COALESCE(u.I_STATUS, '1') = '1'
-  `, [MY_COMPANY_CODE, fromDate]);
+      y.I_EMPLOY_NO                AS emp_no,
+      e.N_EMPLOY_NAME              AS emp_name,
+      y.D_START_DATE               AS start_date,
+      y.D_END_DATE                 AS end_date,
+      y.I_CODE                     AS leave_code,
+      CAST(y.I_CODE AS CHAR)       AS leave_name,
+      CAST(y.O_ANNLEV_CNT AS CHAR) AS leave_days,
+      y.I_STATUS                   AS status
+    FROM hr_yuncha_use y
+    INNER JOIN hr_employee e ON e.I_COMPANY = y.I_COMPANY AND e.I_EMPLOY_NO = y.I_EMPLOY_NO
+    INNER JOIN hr_department d ON d.I_COMPANY = e.I_COMPANY AND d.I_DEPT = e.I_DEPT
+    WHERE y.I_COMPANY = ?
+      AND y.I_STATUS = '40'
+      AND y.D_END_DATE >= ?
+  `, [MY_COMPANY_CODE, fromStr]);
 
   if (!rows || rows.length === 0) return 0;
 
-  const batch = rows.map((row) => ({
-    emp_no: normalizeEmpNo(row.emp_no),
-    emp_name: String(row.emp_name || '').trim(),
-    start_date: String(row.start_date || '').replace(/\D/g, '').slice(0, 8),
-    end_date: String(row.end_date || row.start_date || '').replace(/\D/g, '').slice(0, 8),
-    leave_code: String(row.leave_code || '연차'),
-    leave_name: String(row.leave_name || '연차'),
-    leave_days: parseFloat(row.leave_days || 1),
-    status: String(row.status || '1'),
+  const records = rows.map((r) => ({
+    emp_no: normalizeEmpNo(r.emp_no),
+    emp_name: String(r.emp_name || '').trim(),
+    start_date: String(r.start_date || '').replace(/\D/g, '').slice(0, 8),
+    end_date: String(r.end_date || r.start_date || '').replace(/\D/g, '').slice(0, 8),
+    leave_code: String(r.leave_code || '연차'),
+    leave_name: String(r.leave_name || '연차'),
+    leave_days: parseFloat(r.leave_days) || 1,
+    status: String(r.status || '40'),
     synced_at: new Date().toISOString(),
   })).filter((item) => Boolean(item.emp_no && item.start_date));
 
+  const uniqueRecords = [];
+  const seen = new Set();
+  for (const r of records) {
+    const key = `${r.emp_no}_${r.start_date}_${r.leave_code}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      uniqueRecords.push(r);
+    }
+  }
+
   const { error } = await supabase
     .from('db_leaves')
-    .upsert(batch, { onConflict: 'emp_no,start_date,leave_code' });
+    .upsert(uniqueRecords, { onConflict: 'emp_no,start_date,leave_code' });
 
   if (error) {
     throw new Error(`db_leaves upsert 실패: ${error.message}`);
   }
 
-  return batch.length;
+  return uniqueRecords.length;
 }
 
 async function runSync() {

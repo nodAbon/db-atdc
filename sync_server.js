@@ -135,17 +135,18 @@ async function syncEmployees(conn) {
 
   const [rows] = await conn.execute(`
     SELECT
-      e.I_EMPLOY_NO AS emp_no,
-      e.I_NAME      AS name,
-      d.I_DEPT_NAME AS dept,
-      e.I_EMAIL     AS email,
-      e.I_LOGIN_ID  AS login_id,
-      e.I_RETIRE_YN AS retire_yn
+      e.*,
+      e.I_EMPLOY_NO   AS emp_no,
+      e.N_EMPLOY_NAME AS name,
+      d.N_DEPT        AS dept,
+      e.I_RETIRE_YN   AS retire_yn
     FROM hr_employee e
     LEFT JOIN hr_department d ON
       d.I_COMPANY = e.I_COMPANY
       AND d.I_DEPT = e.I_DEPT
     WHERE e.I_COMPANY = ?
+      AND COALESCE(e.I_RETIRE_YN, '0') <> '1'
+    ORDER BY d.N_DEPT, e.N_EMPLOY_NAME
   `, [CONFIG.companyCode]);
 
   if (!rows || rows.length === 0) {
@@ -153,16 +154,27 @@ async function syncEmployees(conn) {
     return 0;
   }
 
+  function pickFirst(row, keys = []) {
+    for (const k of keys) {
+      const v = String(row?.[k] ?? '').trim();
+      if (v) return v;
+    }
+    return '';
+  }
+
   const batch = rows.map((row) => {
     const empNo = normalizeEmpNo(row.emp_no);
+    const email = pickFirst(row, ['email', 'EMAIL', 'I_EMAIL', 'N_EMAIL', 'EMAIL_ADDRESS']);
+    const loginId = pickFirst(row, ['login_id', 'LOGIN_ID', 'user_id', 'USER_ID', 'userid']) || (email.includes('@') ? email.split('@')[0] : '');
+
     return {
       emp_no: empNo,
       name: String(row.name || '').trim(),
       dept: String(row.dept || '').trim() || '소속미지정',
-      email: row.email ? String(row.email).trim() : null,
-      login_id: row.login_id ? String(row.login_id).trim() : null,
+      email: email && email.includes('@') ? email : null,
+      login_id: loginId || null,
       company_code: CONFIG.companyCode,
-      is_active: String(row.retire_yn || '0') !== '1',
+      is_active: true,
       synced_at: new Date().toISOString(),
     };
   }).filter((item) => Boolean(item.emp_no));
@@ -185,55 +197,65 @@ async function syncEmployees(conn) {
 async function syncLeaves(conn) {
   log('INFO', `2/3 연차 사용내역 동기화 시작 (법인: ${CONFIG.companyCode})`);
 
-  const currentYear = new Date().getFullYear();
-  const fromDate = `${currentYear - 1}0101`; // 작년 1월부터 전체
+  const now = new Date();
+  const fromMonth = new Date(now.getFullYear(), now.getMonth() - 2, 1);
+  const fromStr = `${fromMonth.getFullYear()}${String(fromMonth.getMonth() + 1).padStart(2, '0')}01`;
 
   const [rows] = await conn.execute(`
     SELECT
-      u.I_EMPLOY_NO AS emp_no,
-      e.I_NAME      AS emp_name,
-      u.I_FROM_DATE AS start_date,
-      u.I_TO_DATE   AS end_date,
-      u.I_USE_CODE  AS leave_code,
-      u.I_USE_NAME  AS leave_name,
-      u.I_USE_DAYS  AS leave_days,
-      u.I_STATUS    AS status
-    FROM hr_yuncha_use u
-    INNER JOIN hr_employee e ON
-      e.I_COMPANY = u.I_COMPANY
-      AND e.I_EMPLOY_NO = u.I_EMPLOY_NO
-    WHERE u.I_COMPANY = ?
-      AND u.I_FROM_DATE >= ?
-      AND COALESCE(u.I_STATUS, '1') = '1'
-  `, [CONFIG.companyCode, fromDate]);
+      y.I_EMPLOY_NO                AS emp_no,
+      e.N_EMPLOY_NAME              AS emp_name,
+      y.D_START_DATE               AS start_date,
+      y.D_END_DATE                 AS end_date,
+      y.I_CODE                     AS leave_code,
+      CAST(y.I_CODE AS CHAR)       AS leave_name,
+      CAST(y.O_ANNLEV_CNT AS CHAR) AS leave_days,
+      y.I_STATUS                   AS status
+    FROM hr_yuncha_use y
+    INNER JOIN hr_employee e ON e.I_COMPANY = y.I_COMPANY AND e.I_EMPLOY_NO = y.I_EMPLOY_NO
+    INNER JOIN hr_department d ON d.I_COMPANY = e.I_COMPANY AND d.I_DEPT = e.I_DEPT
+    WHERE y.I_COMPANY = ?
+      AND y.I_STATUS = '40'
+      AND y.D_END_DATE >= ?
+  `, [CONFIG.companyCode, fromStr]);
 
   if (!rows || rows.length === 0) {
     log('INFO', '동기화 대상 연차 데이터가 없습니다.');
     return 0;
   }
 
-  const batch = rows.map((row) => ({
-    emp_no: normalizeEmpNo(row.emp_no),
-    emp_name: String(row.emp_name || '').trim(),
-    start_date: String(row.start_date || '').replace(/\D/g, '').slice(0, 8),
-    end_date: String(row.end_date || row.start_date || '').replace(/\D/g, '').slice(0, 8),
-    leave_code: String(row.leave_code || '연차'),
-    leave_name: String(row.leave_name || '연차'),
-    leave_days: parseFloat(row.leave_days || 1),
-    status: String(row.status || '1'),
+  const records = rows.map((r) => ({
+    emp_no: normalizeEmpNo(r.emp_no),
+    emp_name: String(r.emp_name || '').trim(),
+    start_date: String(r.start_date || '').replace(/\D/g, '').slice(0, 8),
+    end_date: String(r.end_date || r.start_date || '').replace(/\D/g, '').slice(0, 8),
+    leave_code: String(r.leave_code || '연차'),
+    leave_name: String(r.leave_name || '연차'),
+    leave_days: parseFloat(r.leave_days) || 1,
+    status: String(r.status || '40'),
     synced_at: new Date().toISOString(),
   })).filter((item) => Boolean(item.emp_no && item.start_date));
 
+  const uniqueRecords = [];
+  const seen = new Set();
+  for (const r of records) {
+    const key = `${r.emp_no}_${r.start_date}_${r.leave_code}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      uniqueRecords.push(r);
+    }
+  }
+
   const { error } = await supabase
     .from('db_leaves')
-    .upsert(batch, { onConflict: 'emp_no,start_date,leave_code' });
+    .upsert(uniqueRecords, { onConflict: 'emp_no,start_date,leave_code' });
 
   if (error) {
     throw new Error(`db_leaves upsert 실패: ${error.message}`);
   }
 
-  log('SUCCESS', `연차 사용내역 동기화 완료: ${batch.length}건`);
-  return batch.length;
+  log('SUCCESS', `연차 사용내역 동기화 완료: ${uniqueRecords.length}건`);
+  return uniqueRecords.length;
 }
 
 // ------------------------------------------------------------------------------

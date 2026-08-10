@@ -22,8 +22,8 @@ const MYSQL_CONFIG = {
 };
 
 const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY,
+  process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
   { auth: { autoRefreshToken: false, persistSession: false } }
 );
 
@@ -36,34 +36,46 @@ function normalizeEmpNo(value) {
   return digits.slice(-8).replace(/^0+/, '') || digits.slice(-8);
 }
 
+function pickFirst(row, keys = []) {
+  for (const k of keys) {
+    const v = String(row?.[k] ?? '').trim();
+    if (v) return v;
+  }
+  return '';
+}
+
 async function syncEmployees(conn) {
   const [rows] = await conn.execute(`
     SELECT
-      e.I_EMPLOY_NO AS emp_no,
-      e.I_NAME      AS name,
-      d.I_DEPT_NAME AS dept,
-      e.I_EMAIL     AS email,
-      e.I_LOGIN_ID  AS login_id,
-      e.I_RETIRE_YN AS retire_yn
+      e.*,
+      e.I_EMPLOY_NO   AS emp_no,
+      e.N_EMPLOY_NAME AS name,
+      d.N_DEPT        AS dept,
+      e.I_RETIRE_YN   AS retire_yn
     FROM hr_employee e
     LEFT JOIN hr_department d ON
       d.I_COMPANY = e.I_COMPANY
       AND d.I_DEPT = e.I_DEPT
     WHERE e.I_COMPANY = ?
+      AND COALESCE(e.I_RETIRE_YN, '0') <> '1'
+    ORDER BY d.N_DEPT, e.N_EMPLOY_NAME
   `, [MY_COMPANY_CODE]);
 
   if (!rows || rows.length === 0) return 0;
 
   const batch = rows.map((row) => {
     const empNo = normalizeEmpNo(row.emp_no);
+    const email = pickFirst(row, ['email', 'EMAIL', 'I_EMAIL', 'N_EMAIL', 'EMAIL_ADDRESS']);
+    const loginId = pickFirst(row, ['login_id', 'LOGIN_ID', 'user_id', 'USER_ID', 'userid']) || (email.includes('@') ? email.split('@')[0] : '');
+
     return {
       emp_no: empNo,
       name: String(row.name || '').trim(),
       dept: String(row.dept || '').trim() || '소속미지정',
-      email: row.email ? String(row.email).trim() : null,
-      login_id: row.login_id ? String(row.login_id).trim() : null,
+      email: email && email.includes('@') ? email : null,
+      login_id: loginId || null,
       company_code: MY_COMPANY_CODE,
-      is_active: String(row.retire_yn || '0') !== '1',
+      is_active: true,
       synced_at: new Date().toISOString(),
     };
   }).filter((item) => Boolean(item.emp_no));
