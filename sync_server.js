@@ -81,7 +81,7 @@ const CONFIG = {
   companyCode: process.env.MY_COMPANY_CODE || process.env.COMPANY_CODE || '1700',
   capsGroup: process.env.CAPS_E_GROUP || '09',
   syncIntervalMs: parseInt(process.env.SYNC_INTERVAL_MS, 10) || 10 * 60 * 1000, // 기본 10분
-  daysToSyncAttendance: 30, // 최근 30일 출입로그 동기화
+  attendanceLookbackMinutes: parseInt(process.env.ATTENDANCE_LOOKBACK_MINUTES, 10) || 60, // 기본 최근 1시간 출입로그 동기화
 };
 
 // Supabase 키 유효성 검사 및 안내
@@ -145,7 +145,6 @@ async function syncEmployees(conn) {
       d.I_COMPANY = e.I_COMPANY
       AND d.I_DEPT = e.I_DEPT
     WHERE e.I_COMPANY = ?
-      AND COALESCE(e.I_RETIRE_YN, '0') <> '1'
     ORDER BY d.N_DEPT, e.N_EMPLOY_NAME
   `, [CONFIG.companyCode]);
 
@@ -167,16 +166,18 @@ async function syncEmployees(conn) {
     const email = pickFirst(row, ['email', 'EMAIL', 'I_EMAIL', 'N_EMAIL', 'EMAIL_ADDRESS']);
     const loginId = pickFirst(row, ['login_id', 'LOGIN_ID', 'user_id', 'USER_ID', 'userid']) || (email.includes('@') ? email.split('@')[0] : '');
 
-    return {
+    const sourceRetired = String(row.retire_yn ?? '').trim() === '1';
+    const item = {
       emp_no: empNo,
       name: String(row.name || '').trim(),
       dept: String(row.dept || '').trim() || '소속미지정',
       email: email && email.includes('@') ? email : null,
       login_id: loginId || null,
       company_code: CONFIG.companyCode,
-      is_active: true,
       synced_at: new Date().toISOString(),
     };
+    if (sourceRetired) item.is_active = false;
+    return item;
   }).filter((item) => Boolean(item.emp_no));
 
   const { error } = await supabase
@@ -198,8 +199,9 @@ async function syncLeaves(conn) {
   log('INFO', `2/3 연차 사용내역 동기화 시작 (법인: ${CONFIG.companyCode})`);
 
   const now = new Date();
-  const fromMonth = new Date(now.getFullYear(), now.getMonth() - 2, 1);
-  const fromStr = `${fromMonth.getFullYear()}${String(fromMonth.getMonth() + 1).padStart(2, '0')}01`;
+  const toDate = new Date(now.getFullYear(), now.getMonth() + 1, now.getDate());
+  const fromStr = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+  const toStr = `${toDate.getFullYear()}${String(toDate.getMonth() + 1).padStart(2, '0')}${String(toDate.getDate()).padStart(2, '0')}`;
 
   const [rows] = await conn.execute(`
     SELECT
@@ -216,8 +218,9 @@ async function syncLeaves(conn) {
     INNER JOIN hr_department d ON d.I_COMPANY = e.I_COMPANY AND d.I_DEPT = e.I_DEPT
     WHERE y.I_COMPANY = ?
       AND y.I_STATUS = '40'
+      AND y.D_START_DATE <= ?
       AND y.D_END_DATE >= ?
-  `, [CONFIG.companyCode, fromStr]);
+  `, [CONFIG.companyCode, toStr, fromStr]);
 
   if (!rows || rows.length === 0) {
     log('INFO', '동기화 대상 연차 데이터가 없습니다.');
@@ -265,9 +268,8 @@ async function syncCapsAttendance(conn) {
   log('INFO', `3/3 CAPS 출입기록 동기화 시작 (법인: ${CONFIG.companyCode}, 그룹: ${CONFIG.capsGroup})`);
 
   const now = new Date();
-  const fromDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - CONFIG.daysToSyncAttendance);
-  const fromStr = `${fromDate.getFullYear()}${String(fromDate.getMonth() + 1).padStart(2, '0')}${String(fromDate.getDate()).padStart(2, '0')}`;
-  const todayStr = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+  const cutoff = new Date(now.getTime() - CONFIG.attendanceLookbackMinutes * 60 * 1000);
+  const cutoffStr = `${cutoff.getFullYear()}${String(cutoff.getMonth() + 1).padStart(2, '0')}${String(cutoff.getDate()).padStart(2, '0')}${String(cutoff.getHours()).padStart(2, '0')}${String(cutoff.getMinutes()).padStart(2, '0')}${String(cutoff.getSeconds()).padStart(2, '0')}`;
 
   const [rows] = await conn.execute(`
     SELECT
@@ -293,13 +295,12 @@ async function syncCapsAttendance(conn) {
       AND d.I_DEPT = e.I_DEPT
     WHERE COALESCE(e.I_RETIRE_YN, '0') <> '1'
       AND t.E_GROUP = ?
-      AND t.E_DATE >= ?
-      AND t.E_DATE <= ?
+      AND CONCAT(REPLACE(CAST(t.E_DATE AS CHAR), '-', ''), LPAD(REPLACE(CAST(t.E_TIME AS CHAR), ':', ''), 6, '0')) >= ?
     ORDER BY t.E_DATE DESC, t.E_TIME DESC
-  `, [CONFIG.companyCode, CONFIG.companyCode, CONFIG.capsGroup, fromStr, todayStr]);
+  `, [CONFIG.companyCode, CONFIG.companyCode, CONFIG.capsGroup, cutoffStr]);
 
   if (!rows || rows.length === 0) {
-    log('INFO', `최근 ${CONFIG.daysToSyncAttendance}일간 대상 CAPS 출입기록이 없습니다.`);
+    log('INFO', `최근 ${CONFIG.attendanceLookbackMinutes}분 대상 CAPS 출입기록이 없습니다.`);
     return 0;
   }
 
@@ -338,7 +339,7 @@ async function syncCapsAttendance(conn) {
     total += batch.length;
   }
 
-  log('SUCCESS', `CAPS 출입기록 동기화 완료: ${total}건 (최근 ${CONFIG.daysToSyncAttendance}일)`);
+  log('SUCCESS', `CAPS 출입기록 동기화 완료: ${total}건 (최근 ${CONFIG.attendanceLookbackMinutes}분)`);
   return total;
 }
 
