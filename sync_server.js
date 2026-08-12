@@ -14,7 +14,7 @@
  * 
  * [실행 방법]
  *   1회 즉시 실행:  node sync_server.js --once
- *   데몬 주기 실행: node sync_server.js (기본 10분 주기)
+ *   데몬 주기 실행: node sync_server.js (기본 30분 주기)
  *   PM2 백그라운드: pm2 start sync_server.js --name db-atdc-sync
  * ==============================================================================
  */
@@ -80,7 +80,7 @@ const CONFIG = {
   // 법인 및 캡스 필터
   companyCode: process.env.MY_COMPANY_CODE || process.env.COMPANY_CODE || '1700',
   capsGroup: process.env.CAPS_E_GROUP || '09',
-  syncIntervalMs: parseInt(process.env.SYNC_INTERVAL_MS, 10) || 10 * 60 * 1000, // 기본 10분
+  syncIntervalMs: parseInt(process.env.SYNC_INTERVAL_MS, 10) || 30 * 60 * 1000, // 기본 30분
   attendanceLookbackMinutes: parseInt(process.env.ATTENDANCE_LOOKBACK_MINUTES, 10) || 60, // 기본 최근 1시간 출입로그 동기화
 };
 
