@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useMemo, useCallback, Suspense } from 'react';
 import AppSidebar from '@/components/AppSidebar';
 import { usePersistentTheme } from '@/lib/usePersistentTheme';
+import { getKstDateKey, shiftKstDateKey } from '@/lib/kstDate';
 import {
   Clock,
   Search,
@@ -21,13 +22,11 @@ function AttendanceRecordsContent() {
   const [selectedEmpNo, setSelectedEmpNo] = useState('ALL');
   const [searchKeyword, setSearchKeyword] = useState('');
 
-  // 기본 조회 기간: 최근 2개월 전부터 오늘까지
+  // 기본 조회 기간: 최근 2일(어제부터 오늘까지)
   const [fromDate, setFromDate] = useState(() => {
-    const d = new Date();
-    d.setMonth(d.getMonth() - 2);
-    return d.toISOString().split('T')[0];
+    return shiftKstDateKey(getKstDateKey(), -1);
   });
-  const [toDate, setToDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [toDate, setToDate] = useState(() => getKstDateKey());
   const [activeRange, setActiveRange] = useState('CUSTOM');
 
   const [logs, setLogs] = useState([]);
@@ -105,22 +104,20 @@ function AttendanceRecordsContent() {
   const setQuickRange = (type) => {
     setActiveRange(type);
     const now = new Date();
-    const todayStr = now.toISOString().split('T')[0];
+    const todayStr = getKstDateKey(now);
 
     if (type === 'TODAY') {
       setFromDate(todayStr);
       setToDate(todayStr);
     } else if (type === 'MONTH') {
-      const firstDay = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+      const firstDay = `${todayStr.slice(0, 7)}-01`;
       setFromDate(firstDay);
       setToDate(todayStr);
     } else if (type === '3MONTHS') {
-      const d = new Date();
-      d.setMonth(d.getMonth() - 2);
-      setFromDate(d.toISOString().split('T')[0]);
+      setFromDate(shiftKstDateKey(todayStr, -60));
       setToDate(todayStr);
     } else if (type === 'YEAR') {
-      const yearFirst = `${now.getFullYear()}-01-01`;
+      const yearFirst = `${todayStr.slice(0, 4)}-01-01`;
       setFromDate(yearFirst);
       setToDate(todayStr);
     }
@@ -428,7 +425,7 @@ function AttendanceRecordsContent() {
                           {emp.name}
                         </div>
                         <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 2 }}>
-                          {emp.dept} · {emp.emp_no}
+                          {emp.dept} · {emp.raw_emp_no || emp.emp_no}
                         </div>
                       </div>
                       {isSelected && <CheckCircle2 size={16} style={{ color: 'var(--blue)' }} />}
@@ -445,7 +442,7 @@ function AttendanceRecordsContent() {
               <div>
                 <h3 className="card-title" style={{ fontSize: 16 }}>
                   {selectedEmployee
-                    ? `${selectedEmployee.name} (${selectedEmployee.dept} · 사번 ${selectedEmployee.emp_no}) 출입 기록`
+                    ? `${selectedEmployee.name} (${selectedEmployee.dept} · 사번 ${selectedEmployee.raw_emp_no || selectedEmployee.emp_no}) 출입 기록`
                     : `전체 직원 출입 기록 내역`}
                 </h3>
                 <p className="card-subtitle">
@@ -498,7 +495,7 @@ function AttendanceRecordsContent() {
                             <td>
                               <span style={{ fontWeight: 700, color: 'var(--text-1)' }}>{log.name}</span>
                               <span style={{ fontSize: 11.5, color: 'var(--text-3)', marginLeft: 4, fontFamily: 'var(--mono)' }}>
-                                ({log.empNo})
+                                ({log.raw_emp_no || log.empNo})
                               </span>
                             </td>
                             <td style={{ color: 'var(--text-2)', fontSize: 13 }}>

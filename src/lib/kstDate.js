@@ -54,9 +54,10 @@ export const getKstDateTimeKey = (date = new Date()) => {
 };
 
 export const shiftKstDateKey = (dateKey, days) => {
-  const base = new Date(`${dateKey}T00:00:00+09:00`);
-  base.setDate(base.getDate() + days);
-  return getKstDateKey(base);
+  const match = String(dateKey || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return '';
+  const base = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]) + Number(days || 0)));
+  return `${base.getUTCFullYear()}-${String(base.getUTCMonth() + 1).padStart(2, '0')}-${String(base.getUTCDate()).padStart(2, '0')}`;
 };
 
 export const shiftMonthKey = (monthKey, delta) => {
