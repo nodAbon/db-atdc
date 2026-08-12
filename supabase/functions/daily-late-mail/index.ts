@@ -3,7 +3,7 @@ const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
 const supabaseServiceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 const cronSecret = Deno.env.get('CRON_SECRET') || '';
 const botId = Deno.env.get('NAVER_WORKS_BOT_ID') || '';
-const channelId = Deno.env.get('NAVER_WORKS_CHANNEL_ID') || '';
+const recipientUserId = Deno.env.get('NAVER_WORKS_RECIPIENT_USER_ID') || '';
 
 function response(body: Record<string, unknown>, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: corsHeaders });
@@ -46,9 +46,9 @@ async function hashRecipients(value: string) {
 
 async function sendNaverWorksBotMessage(text: string) {
   const accessToken = Deno.env.get('NAVER_WORKS_ACCESS_TOKEN') || '';
-  if (!accessToken || !botId || !channelId) throw new Error('naverworks_bot_credentials_missing');
+  if (!accessToken || !botId || !recipientUserId) throw new Error('naverworks_bot_credentials_missing');
 
-  const result = await fetch(`https://www.worksapis.com/v1.0/bots/${encodeURIComponent(botId)}/channels/${encodeURIComponent(channelId)}/messages`, {
+  const result = await fetch(`https://www.worksapis.com/v1.0/bots/${encodeURIComponent(botId)}/users/${encodeURIComponent(recipientUserId)}/messages`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ content: { type: 'text', text } }),
@@ -60,15 +60,15 @@ async function sendNaverWorksBotMessage(text: string) {
 Deno.serve(async (request) => {
   if (request.method !== 'POST' && request.method !== 'GET') return response({ error: 'method_not_allowed' }, 405);
   if (!cronSecret || request.headers.get('x-cron-secret') !== cronSecret) return response({ error: 'unauthorized' }, 401);
-  if (!supabaseUrl || !supabaseServiceRoleKey || !botId || !channelId) return response({ error: 'server_configuration_missing' }, 503);
+  if (!supabaseUrl || !supabaseServiceRoleKey || !botId || !recipientUserId) return response({ error: 'server_configuration_missing' }, 503);
 
   const workDate = kstDateKey();
-  const channelHash = await hashRecipients(channelId);
-  const jobKey = `daily-late-bot:${workDate}:${channelHash}`;
+  const recipientHash = await hashRecipients(recipientUserId);
+  const jobKey = `daily-late-bot:${workDate}:${recipientHash}`;
   const claimed = await supabaseRequest('db_notification_deliveries?on_conflict=job_key', {
     method: 'POST',
     headers: { Prefer: 'resolution=ignore-duplicates,return=representation', 'Content-Type': 'application/json' },
-    body: JSON.stringify({ job_key: jobKey, job_type: 'daily-late-mail', work_date: workDate, recipient_hash: channelHash }),
+    body: JSON.stringify({ job_key: jobKey, job_type: 'daily-late-mail', work_date: workDate, recipient_hash: recipientHash }),
   });
   if (!Array.isArray(claimed) || claimed.length === 0) return response({ ok: true, skipped: 'already_claimed', workDate });
 
