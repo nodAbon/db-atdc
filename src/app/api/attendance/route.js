@@ -1,6 +1,7 @@
 process.env.TZ = 'Asia/Seoul';
 import { NextResponse } from 'next/server';
-import { fetchAttendanceLogs, fetchEmployeeSchedules } from '@/lib/supabaseDb';
+import { requireApiSession } from '@/lib/apiAuth';
+import { fetchAttendanceLogs, fetchCalendarLeaves, fetchEmployeeSchedules } from '@/lib/supabaseDb';
 import { getLeaveMeta } from '@/lib/leaveRules';
 import { getKstDateKey, shiftKstDateKey } from '@/lib/kstDate';
 import { normalizeEmpNoKey, formatTimeString } from '@/lib/dashboardUtils';
@@ -21,25 +22,64 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(request) {
   try {
+    const auth = await requireApiSession(request);
+    if (auth.response) return auth.response;
+
     const { searchParams } = new URL(request.url);
     const month = searchParams.get('month') || undefined;
     const dashboardOnly = !month || searchParams.get('dashboardOnly') === 'true';
     const excludeLogs = searchParams.get('excludeLogs') === 'true';
     const empNoFilter = searchParams.get('empNo') || null;
+    const calendarMonth = searchParams.get('calendarMonth') || '';
+    // This deployment is the DreamBay (1700) system. Account authority never
+    // broadens the tenant selected by the site/domain.
+    const includeAllCompanies = false;
 
-    const [attendanceData, employeeSchedules] = await Promise.all([
-      fetchAttendanceLogs(month, { dashboardOnly, excludeLogs, empNo: empNoFilter }),
-      fetchEmployeeSchedules(),
+    let [attendanceData, employeeSchedules, calendarLeaves] = await Promise.all([
+      fetchAttendanceLogs(month, { dashboardOnly, excludeLogs, empNo: empNoFilter, includeAllCompanies }),
+      fetchEmployeeSchedules({ includeAllCompanies }),
+      dashboardOnly && calendarMonth
+        ? fetchCalendarLeaves(calendarMonth, { includeAllCompanies })
+        : Promise.resolve([]),
     ]);
 
-    const {
+    let {
       employees = [],
       logs: rawLogs = [],
-      leaves = [],
+      leaves: attendanceLeaves = [],
       corrections = [],
       overrides = [],
       logAdjustments = [],
     } = attendanceData;
+
+    // kmk remains a valid login account, but is excluded from dashboard
+    // presentation and counts. Monthly reports and authentication are unchanged.
+    if (dashboardOnly) {
+      const hiddenEmpKeys = new Set(
+        employees
+          .filter((employee) => String(employee.login_id || '').toLowerCase() === 'kmk')
+          .map((employee) => normalizeEmpNoKey(employee.emp_no))
+      );
+      const isHidden = (empNo) => hiddenEmpKeys.has(normalizeEmpNoKey(empNo));
+      employees = employees.filter((employee) => !isHidden(employee.emp_no));
+      rawLogs = rawLogs.filter((log) => !isHidden(log.emp_no));
+      attendanceLeaves = attendanceLeaves.filter((leave) => !isHidden(leave.empNo));
+      calendarLeaves = calendarLeaves.filter((leave) => !isHidden(leave.empNo));
+    }
+
+    const leaveMap = new Map();
+    [...attendanceLeaves, ...calendarLeaves].forEach((leave) => {
+      const key = [
+        leave.empNo,
+        leave.startDate,
+        leave.endDate,
+        leave.leaveCode,
+        leave.leaveName,
+        leave.status,
+      ].join('|');
+      leaveMap.set(key, leave);
+    });
+    const leaves = Array.from(leaveMap.values());
 
     const employeeScheduleMap = buildEmployeeScheduleMap(employeeSchedules);
     const overrideMap = buildScheduleOverrideMap(overrides);
@@ -97,7 +137,9 @@ export async function GET(request) {
         name: log.name,
         logTime,
         a_time: aTime,
-        gate: log.e_name || (log.e_group && log.e_node ? `${log.e_group}/${log.e_node}` : '-'),
+        gate: log.gate_name || log.e_name || (log.e_group && log.e_node ? `${log.e_group}/${log.e_node}` : '-'),
+        companyCode: log.company_code || '',
+        dataSource: log.data_source || 'db',
         adjustedRole: adj?.role || null,
         adjustedTime: adj?.custom_time || null,
       };
@@ -164,8 +206,11 @@ export async function GET(request) {
 
       return {
         empNo: emp.emp_no,
+        rawEmpNo: emp.raw_emp_no || emp.emp_no,
         name: emp.name,
         dept: emp.dept,
+        companyCode: emp.company_code || '1700',
+        dataSource: emp.data_source || 'db',
         rank: emp.rank || '',
         scheduleTime: schedule.start || '09:00',
         scheduleEndTime: schedule.end || '18:00',
@@ -230,13 +275,16 @@ export async function GET(request) {
 
     const formattedEmployees = employees.map((e) => ({
       empNo: e.emp_no,
+      rawEmpNo: e.raw_emp_no || e.emp_no,
       name: e.name,
       dept: e.dept,
+      companyCode: e.company_code || '1700',
+      dataSource: e.data_source || 'db',
       scheduleTime: employeeScheduleMap.get(normalizeEmpNoKey(e.emp_no))?.start || '09:00',
       scheduleEndTime: employeeScheduleMap.get(normalizeEmpNoKey(e.emp_no))?.end || '18:00',
     }));
 
-    return NextResponse.json({
+    const responsePayload = {
       success: true,
       employees: formattedEmployees,
       allEmployees: formattedEmployees,
@@ -246,14 +294,19 @@ export async function GET(request) {
       leaves,
       overrides,
       allLogs: parsedLogs,
-    }, {
+    };
+
+    return NextResponse.json(responsePayload, {
       headers: {
-        'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
-        'Pragma': 'no-cache',
+        'Cache-Control': 'private, no-store, max-age=0',
       },
     });
   } catch (error) {
     console.error('attendance API error:', error);
-    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+    return NextResponse.json({
+      success: false,
+      error: '근태 데이터를 불러오지 못했습니다.',
+      detail: process.env.NODE_ENV === 'production' ? undefined : error.message,
+    }, { status: 500 });
   }
 }
