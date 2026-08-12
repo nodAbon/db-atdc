@@ -2,10 +2,8 @@ const corsHeaders = { 'Content-Type': 'application/json' };
 const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
 const supabaseServiceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 const cronSecret = Deno.env.get('CRON_SECRET') || '';
-const recipientEmails = (Deno.env.get('LATE_MAIL_RECIPIENTS') || '')
-  .split(',')
-  .map((value) => value.trim().toLowerCase())
-  .filter((value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value));
+const botId = Deno.env.get('NAVER_WORKS_BOT_ID') || '';
+const channelId = Deno.env.get('NAVER_WORKS_CHANNEL_ID') || '';
 
 function response(body: Record<string, unknown>, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: corsHeaders });
@@ -46,19 +44,14 @@ async function hashRecipients(value: string) {
   return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-async function sendNaverWorksMail(subject: string, body: string) {
+async function sendNaverWorksBotMessage(text: string) {
   const accessToken = Deno.env.get('NAVER_WORKS_ACCESS_TOKEN') || '';
-  const senderUserId = Deno.env.get('NAVER_WORKS_SENDER_USER_ID') || '';
-  if (!accessToken || !senderUserId) throw new Error('naverworks_credentials_missing');
+  if (!accessToken || !botId || !channelId) throw new Error('naverworks_bot_credentials_missing');
 
-  const result = await fetch(`https://www.worksapis.com/v1.0/users/${encodeURIComponent(senderUserId)}/mail`, {
+  const result = await fetch(`https://www.worksapis.com/v1.0/bots/${encodeURIComponent(botId)}/channels/${encodeURIComponent(channelId)}/messages`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      to: recipientEmails.join(','),
-      subject,
-      body,
-    }),
+    body: JSON.stringify({ content: { type: 'text', text } }),
   });
   if (!result.ok) throw new Error(`naverworks_${result.status}`);
   return result.json().catch(() => ({}));
@@ -67,15 +60,15 @@ async function sendNaverWorksMail(subject: string, body: string) {
 Deno.serve(async (request) => {
   if (request.method !== 'POST' && request.method !== 'GET') return response({ error: 'method_not_allowed' }, 405);
   if (!cronSecret || request.headers.get('x-cron-secret') !== cronSecret) return response({ error: 'unauthorized' }, 401);
-  if (!supabaseUrl || !supabaseServiceRoleKey || recipientEmails.length === 0) return response({ error: 'server_configuration_missing' }, 503);
+  if (!supabaseUrl || !supabaseServiceRoleKey || !botId || !channelId) return response({ error: 'server_configuration_missing' }, 503);
 
   const workDate = kstDateKey();
-  const recipientHash = await hashRecipients(recipientEmails.join(','));
-  const jobKey = `daily-late-mail:${workDate}:${recipientHash}`;
+  const channelHash = await hashRecipients(channelId);
+  const jobKey = `daily-late-bot:${workDate}:${channelHash}`;
   const claimed = await supabaseRequest('db_notification_deliveries?on_conflict=job_key', {
     method: 'POST',
     headers: { Prefer: 'resolution=ignore-duplicates,return=representation', 'Content-Type': 'application/json' },
-    body: JSON.stringify({ job_key: jobKey, job_type: 'daily-late-mail', work_date: workDate, recipient_hash: recipientHash }),
+    body: JSON.stringify({ job_key: jobKey, job_type: 'daily-late-mail', work_date: workDate, recipient_hash: channelHash }),
   });
   if (!Array.isArray(claimed) || claimed.length === 0) return response({ ok: true, skipped: 'already_claimed', workDate });
 
@@ -104,14 +97,13 @@ Deno.serve(async (request) => {
       return checkInMinutes > scheduleMinutes ? [{ name: employee.name, dept: employee.dept || '-', checkIn: `${first.slice(0, 2)}:${first.slice(2, 4)}`, schedule: `${String(Math.floor(scheduleMinutes / 60)).padStart(2, '0')}:${String(scheduleMinutes % 60).padStart(2, '0')}` }] : [];
     });
 
-    const subject = `[드림베이] ${workDate} 지각자 현황`;
-    const body = lateEmployees.length === 0
-      ? `${workDate} 지각자가 없습니다.`
-      : [`${workDate} 지각자 ${lateEmployees.length}명`, '', ...lateEmployees.map((employee, index) => `${index + 1}. ${employee.name} / ${employee.dept} / 출근 ${employee.checkIn} / 기준 ${employee.schedule}`)].join('\n');
-    const mailResult = await sendNaverWorksMail(subject, body);
+    const message = lateEmployees.length === 0
+      ? `[드림베이 전일 근태 요약]\n기준일: ${workDate}\n지각자가 없습니다.`
+      : [`[드림베이 전일 근태 요약]`, `기준일: ${workDate}`, `지각자: ${lateEmployees.length}명`, '', ...lateEmployees.map((employee, index) => `${index + 1}. ${employee.name} / ${employee.dept} / 출근 ${employee.checkIn} / 기준 ${employee.schedule}`)].join('\n');
+    const botResult = await sendNaverWorksBotMessage(message);
     await supabaseRequest(`db_notification_deliveries?job_key=eq.${encodeURIComponent(jobKey)}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: 'sent', late_count: lateEmployees.length, provider_message_id: mailResult?.mailId ? String(mailResult.mailId) : null, sent_at: new Date().toISOString(), updated_at: new Date().toISOString() }),
+      body: JSON.stringify({ status: 'sent', late_count: lateEmployees.length, provider_message_id: botResult?.messageId ? String(botResult.messageId) : null, sent_at: new Date().toISOString(), updated_at: new Date().toISOString() }),
     });
     return response({ ok: true, workDate, lateCount: lateEmployees.length });
   } catch (error) {
