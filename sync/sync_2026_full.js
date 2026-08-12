@@ -196,7 +196,6 @@ async function syncEmployees(conn) {
       d.I_COMPANY = e.I_COMPANY
       AND d.I_DEPT = e.I_DEPT
     WHERE e.I_COMPANY = ?
-      AND COALESCE(e.I_RETIRE_YN, '0') <> '1'
     ORDER BY d.N_DEPT, e.N_EMPLOY_NAME
   `, [MY_COMPANY_CODE]);
 
@@ -205,23 +204,34 @@ async function syncEmployees(conn) {
     return 0;
   }
 
-  console.log(`✓ MySQL에서 ${rows.length}명의 재직 임직원을 조회했습니다.`);
+  const empNos = rows.map((row) => normalizeEmpNo(row.emp_no)).filter(Boolean);
+  const { data: existingRows, error: existingError } = await supabase
+    .from('db_employees')
+    .select('emp_no,is_active')
+    .in('emp_no', empNos);
+  if (existingError) throw new Error(`기존 재직상태 조회 실패: ${existingError.message}`);
+  const existingByEmpNo = new Map((existingRows || []).map((row) => [row.emp_no, row]));
+
+  console.log(`✓ MySQL에서 ${rows.length}명의 임직원(퇴사 상태 포함)을 조회했습니다.`);
 
   const batch = rows.map((row) => {
     const empNo = normalizeEmpNo(row.emp_no);
     const email = pickFirst(row, ['email', 'EMAIL', 'I_EMAIL', 'N_EMAIL', 'EMAIL_ADDRESS']);
     const loginId = pickFirst(row, ['login_id', 'LOGIN_ID', 'user_id', 'USER_ID', 'userid']) || (email.includes('@') ? email.split('@')[0] : '');
 
-    return {
+    const sourceRetired = String(row.retire_yn ?? '').trim() === '1';
+    const existing = existingByEmpNo.get(empNo);
+    const item = {
       emp_no: empNo,
       name: String(row.name || '').trim(),
       dept: String(row.dept || '').trim() || '소속미지정',
       email: email && email.includes('@') ? email : null,
       login_id: loginId || null,
       company_code: MY_COMPANY_CODE,
-      is_active: true,
+      is_active: sourceRetired ? false : (existing ? existing.is_active !== false : true),
       synced_at: new Date().toISOString(),
     };
+    return item;
   }).filter((item) => Boolean(item.emp_no && item.name));
 
   const { error } = await supabase

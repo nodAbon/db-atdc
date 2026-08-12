@@ -153,6 +153,14 @@ async function syncEmployees(conn) {
     return 0;
   }
 
+  const empNos = rows.map((row) => normalizeEmpNo(row.emp_no)).filter(Boolean);
+  const { data: existingRows, error: existingError } = await supabase
+    .from('db_employees')
+    .select('emp_no,is_active')
+    .in('emp_no', empNos);
+  if (existingError) throw new Error(`기존 재직상태 조회 실패: ${existingError.message}`);
+  const existingByEmpNo = new Map((existingRows || []).map((row) => [row.emp_no, row]));
+
   function pickFirst(row, keys = []) {
     for (const k of keys) {
       const v = String(row?.[k] ?? '').trim();
@@ -167,6 +175,7 @@ async function syncEmployees(conn) {
     const loginId = pickFirst(row, ['login_id', 'LOGIN_ID', 'user_id', 'USER_ID', 'userid']) || (email.includes('@') ? email.split('@')[0] : '');
 
     const sourceRetired = String(row.retire_yn ?? '').trim() === '1';
+    const existing = existingByEmpNo.get(empNo);
     const item = {
       emp_no: empNo,
       name: String(row.name || '').trim(),
@@ -174,9 +183,9 @@ async function syncEmployees(conn) {
       email: email && email.includes('@') ? email : null,
       login_id: loginId || null,
       company_code: CONFIG.companyCode,
+      is_active: sourceRetired ? false : (existing ? existing.is_active !== false : true),
       synced_at: new Date().toISOString(),
     };
-    if (sourceRetired) item.is_active = false;
     return item;
   }).filter((item) => Boolean(item.emp_no));
 
