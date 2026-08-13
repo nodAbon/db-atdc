@@ -2,6 +2,7 @@ import Holidays from 'npm:date-holidays';
 
 const corsHeaders = { 'Content-Type': 'application/json' };
 const koreanHolidays = new Holidays('KR');
+const koreanHolidayCache = new Map<number, Set<string>>();
 const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
 const supabaseServiceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 const cronSecret = Deno.env.get('CRON_SECRET') || '';
@@ -39,8 +40,18 @@ function isWeekend(dateKey: string) {
 }
 
 function isKoreanHoliday(dateKey: string) {
-  return koreanHolidays.getHolidays(Number(dateKey.slice(0, 4)))
-    .some((holiday: any) => String(holiday.date || '').slice(0, 10) === dateKey);
+  const year = Number(dateKey.slice(0, 4));
+  if (!koreanHolidayCache.has(year)) {
+    const holidayDates = new Set(
+      koreanHolidays.getHolidays(year)
+        // date-holidays calculates the year's substitute holidays and marks
+        // them with substitute=true; public holidays are the non-working days.
+        .filter((holiday: any) => holiday.type === 'public')
+        .map((holiday: any) => String(holiday.date || '').slice(0, 10)),
+    );
+    koreanHolidayCache.set(year, holidayDates);
+  }
+  return koreanHolidayCache.get(year)?.has(dateKey) || false;
 }
 
 function isNonBusinessDate(dateKey: string) {
