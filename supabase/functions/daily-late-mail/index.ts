@@ -178,7 +178,7 @@ function reportSection(title, count, color, headers, rows, emptyText = '해당 �
   return `<tr><td style="padding:24px 0 9px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="font-size:17px;font-weight:700;color:#172033;"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${color};margin:0 9px 2px 0;"></span>${title}</td><td align="right" style="font-size:13px;color:#667085;">${count}명</td></tr></table></td></tr><tr><td style="padding:0;"><table width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #dfe4ea;border-radius:8px;border-collapse:separate;overflow:hidden;"><tr>${headers.map((header) => `<th align="left" style="padding:11px 14px;background:#eef2f6;border-bottom:1px solid #dfe4ea;color:#475467;font-size:13px;font-weight:700;white-space:nowrap;">${header}</th>`).join('')}</tr>${body}</table></td></tr>`;
 }
 
-function buildReport({ workDate, late, absent, early, leave, employees }) {
+function buildReport({ workDate, late, absent, early, leave, scheduleExceptions, employees }) {
   const summaryItems = [
     ['지각', late.length, '#fff7e6', '#b54708'],
     ['미출근', absent.length, '#fff0f0', '#b42318'],
@@ -193,6 +193,7 @@ function buildReport({ workDate, late, absent, early, leave, employees }) {
     reportSection('미출근자', absent.length, '#ef4444', ['이름'], absent.map((row) => [row.name])),
     reportSection('조기퇴근자', early.length, '#8b5cf6', ['이름', '퇴근'], early.map((row) => [row.name, row.checkOut])),
     reportSection('휴가자', leave.length, '#10b981', ['이름', '휴가 구분'], leave.map((row) => [row.name, row.leaveName])),
+    reportSection('개인별 출근기준 적용', scheduleExceptions.length, '#0ea5e9', ['이름', '출근시간', '사유'], scheduleExceptions.map((row) => [row.name, row.checkIn, row.reason])),
   ].join('');
   return `<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0;padding:0;background:#f3f5f8;color:#172033;font-family:Arial,'Malgun Gothic',sans-serif;font-size:14px;line-height:1.5;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;background:#f3f5f8;"><tr><td align="center" style="padding:24px 10px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;min-width:640px;background:#ffffff;border:1px solid #e4e7ec;"><tr><td style="padding:26px 30px 23px;background:#173f68;color:#ffffff;"><div style="font-size:12px;letter-spacing:.4px;color:#b9cbe0;">DREAMBAY ATTENDANCE</div><div style="font-size:24px;font-weight:700;margin-top:6px;">전일 근무일정</div><div style="font-size:13px;color:#d5e1ee;margin-top:5px;">기준일 ${escapeHtml(workDate)} · 재직자 ${employees.length}명</div></td></tr><tr><td style="padding:24px 30px 30px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;min-width:580px;"><tr>${summary}</tr>${sections}</table></td></tr><tr><td style="padding:15px 30px;border-top:1px solid #eef1f5;text-align:center;color:#98a2b3;font-size:11px;">드림베이 근태관리시스템에서 자동 발송된 메일입니다.</td></tr></table></td></tr></table></body></html>`;
 }
@@ -221,12 +222,12 @@ Deno.serve(async (request) => {
   try {
     const dateStart = workDate.replace(/-/g, '');
     const employees = await supabaseRequest('db_employees?company_code=eq.1700&is_active=eq.true&select=emp_no,name,dept');
-    const schedules = await supabaseRequest('db_employee_schedules?select=emp_no,schedule_time');
+    const schedules = await supabaseRequest('db_employee_schedules?select=emp_no,schedule_time,schedule_reason');
     const logs = await supabaseRequest(`db_attendance?a_time=gte.${dateStart}000000&a_time=lte.${dateStart}235959&select=emp_no,a_time&order=a_time.asc`);
     const leaves = await supabaseRequest(`db_leaves?start_date=lte.${dateStart}&end_date=gte.${dateStart}&status=eq.40&select=emp_no,leave_code,leave_name,leave_days`);
 
     const employeeMap = new Map((employees || []).map((row: any) => [normalizeEmpNo(row.emp_no), row]));
-    const scheduleMap = new Map((schedules || []).map((row: any) => [normalizeEmpNo(row.emp_no), toMinutes(row.schedule_time)]));
+    const scheduleMap = new Map((schedules || []).map((row: any) => [normalizeEmpNo(row.emp_no), row]));
     const leaveMap = new Map<string, any[]>();
     for (const row of leaves || []) {
       const empNo = normalizeEmpNo(row.emp_no);
@@ -243,6 +244,7 @@ Deno.serve(async (request) => {
     const late: any[] = [];
     const absent: any[] = [];
     const early: any[] = [];
+    const scheduleExceptions: any[] = [];
     for (const employee of employees || []) {
       const empNo = normalizeEmpNo(employee.emp_no);
       const employeeLogs = logMap.get(empNo) || [];
@@ -254,10 +256,15 @@ Deno.serve(async (request) => {
       }
       const first = displayTime(employeeLogs[0]);
       const last = displayTime(employeeLogs[employeeLogs.length - 1]);
-      const scheduleMinutes = scheduleMap.get(empNo) ?? 540;
+      const schedule = scheduleMap.get(empNo);
+      const scheduleMinutes = schedule ? toMinutes(schedule.schedule_time) : 540;
       const firstMinutes = toMinutes(first);
       const lastMinutes = toMinutes(last);
       const lateLimit = hasLeaveCode(employeeLeaves, ['16', '61']) ? 14 * 60 : scheduleMinutes;
+      const scheduleReason = String(schedule?.schedule_reason || '').trim();
+      if (scheduleMinutes > 9 * 60 && firstMinutes > 9 * 60 && firstMinutes <= scheduleMinutes && scheduleReason && !fullDayLeave) {
+        scheduleExceptions.push({ name: employee.name, checkIn: first, reason: scheduleReason });
+      }
       if (firstMinutes > lateLimit && !fullDayLeave) {
         late.push({ name: employee.name, checkIn: first, schedule: formatMinutes(scheduleMinutes) });
       }
@@ -270,13 +277,13 @@ Deno.serve(async (request) => {
       name: employeeMap.get(empNo)?.name || empNo,
       leaveName: rows.map((row) => leaveLabel(row)).join(', '),
     }));
-    const message = buildReport({ workDate, late, absent, early, leave: leaveRows, employees });
+    const message = buildReport({ workDate, late, absent, early, leave: leaveRows, scheduleExceptions, employees });
     const providerMessageId = await sendMail(`[드림베이 전일 근무일정] ${workDate}`, message);
     await supabaseRequest(`db_notification_deliveries?job_key=eq.${encodeURIComponent(jobKey)}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: 'sent', late_count: late.length, provider_message_id: providerMessageId, sent_at: new Date().toISOString(), updated_at: new Date().toISOString() }),
     });
-    return response({ ok: true, workDate, lateCount: late.length, absentCount: absent.length, earlyCount: early.length, leaveCount: leaveRows.length });
+    return response({ ok: true, workDate, lateCount: late.length, absentCount: absent.length, earlyCount: early.length, leaveCount: leaveRows.length, scheduleExceptionCount: scheduleExceptions.length });
   } catch (error) {
     await supabaseRequest(`db_notification_deliveries?job_key=eq.${encodeURIComponent(jobKey)}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
