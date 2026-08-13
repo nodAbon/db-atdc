@@ -1,4 +1,7 @@
+import Holidays from 'npm:date-holidays';
+
 const corsHeaders = { 'Content-Type': 'application/json' };
+const koreanHolidays = new Holidays('KR');
 const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
 const supabaseServiceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 const cronSecret = Deno.env.get('CRON_SECRET') || '';
@@ -21,9 +24,33 @@ function kstDateKey(date = new Date()) {
   }).format(date);
 }
 
-function previousKstDateKey() {
-  const today = new Date(`${kstDateKey()}T00:00:00+09:00`);
-  return kstDateKey(new Date(today.getTime() - 24 * 60 * 60 * 1000));
+function shiftDateKey(dateKey: string, days: number) {
+  const [year, month, day] = dateKey.split('-').map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day + days));
+  return [date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate()]
+    .map((value, index) => index === 0 ? String(value) : String(value).padStart(2, '0'))
+    .join('-');
+}
+
+function isWeekend(dateKey: string) {
+  const [year, month, day] = dateKey.split('-').map(Number);
+  const weekDay = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+  return weekDay === 0 || weekDay === 6;
+}
+
+function isKoreanHoliday(dateKey: string) {
+  return koreanHolidays.getHolidays(Number(dateKey.slice(0, 4)))
+    .some((holiday: any) => String(holiday.date || '').slice(0, 10) === dateKey);
+}
+
+function isNonBusinessDate(dateKey: string) {
+  return isWeekend(dateKey) || isKoreanHoliday(dateKey);
+}
+
+function previousBusinessDateKey(todayKey: string) {
+  let dateKey = shiftDateKey(todayKey, -1);
+  while (isNonBusinessDate(dateKey)) dateKey = shiftDateKey(dateKey, -1);
+  return dateKey;
 }
 
 function normalizeEmpNo(value: unknown) {
@@ -166,7 +193,11 @@ Deno.serve(async (request) => {
     return response({ error: 'server_configuration_missing' }, 503);
   }
 
-  const workDate = previousKstDateKey();
+  const todayKey = kstDateKey();
+  if (isNonBusinessDate(todayKey)) {
+    return response({ ok: true, skipped: 'non_business_day', date: todayKey });
+  }
+  const workDate = previousBusinessDateKey(todayKey);
   const recipientHash = await hashRecipients(recipients.join(','));
   const jobKey = `daily-late-mail:${workDate}:${recipientHash}`;
   const claimed = await supabaseRequest('db_notification_deliveries?on_conflict=job_key', {
