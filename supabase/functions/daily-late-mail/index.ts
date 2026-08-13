@@ -134,28 +134,25 @@ async function sendMail(subject: string, body: string) {
 
 function reportSection(title, count, color, headers, rows, emptyText = '해당 없음') {
   const body = rows.length
-    ? rows.map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join('')}</tr>`).join('')
-    : `<tr><td colspan="${headers.length}" class="empty">${emptyText}</td></tr>`;
-  return `<section class="section"><div class="section-title"><span class="dot" style="background:${color}"></span><span>${title}</span><strong>${count}명</strong></div><table><thead><tr>${headers.map((header) => `<th>${header}</th>`).join('')}</tr></thead><tbody>${body}</tbody></table></section>`;
+    ? rows.map((row) => `<tr>${row.map((cell) => `<td style="padding:10px 12px;border-bottom:1px solid #edf0f4;color:#344054;font-size:13px;">${escapeHtml(cell)}</td>`).join('')}</tr>`).join('')
+    : `<tr><td colspan="${headers.length}" style="padding:14px 12px;text-align:center;color:#98a2b3;font-size:13px;">${emptyText}</td></tr>`;
+  return `<tr><td style="padding:22px 0 8px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="font-size:16px;font-weight:700;color:#172033;"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${color};margin:0 8px 2px 0;"></span>${title}</td><td align="right" style="font-size:13px;color:#667085;">${count}명</td></tr></table></td></tr><tr><td style="padding:0;"><table width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #e4e7ec;border-radius:6px;border-collapse:separate;overflow:hidden;"><tr>${headers.map((header) => `<th align="left" style="padding:9px 12px;background:#f8fafc;border-bottom:1px solid #e4e7ec;color:#667085;font-size:12px;font-weight:600;">${header}</th>`).join('')}</tr>${body}</table></td></tr>`;
 }
 
 function buildReport({ workDate, late, absent, early, leave, employees }) {
-  const cards = [
-    ['지각', late.length, '#f59e0b'],
-    ['미출근', absent.length, '#ef4444'],
-    ['조기퇴근', early.length, '#8b5cf6'],
-    ['휴가', leave.length, '#10b981'],
-  ].map(([label, count, color]) => `<div class="card"><div class="card-label"><span class="dot" style="background:${color}"></span>${label}</div><div class="card-value">${count}<small>명</small></div></div>`).join('');
+  const summary = [
+    ['지각', late.length, '#fff7e6', '#b54708'],
+    ['미출근', absent.length, '#fff0f0', '#b42318'],
+    ['조기퇴근', early.length, '#f4f0ff', '#6941c6'],
+    ['휴가', leave.length, '#ecfdf3', '#027a48'],
+  ].map(([label, count, background, color]) => `<td width="25%" style="padding:0 4px;"><table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${background};border:1px solid #eaecf0;border-radius:6px;"><tr><td style="padding:10px 10px 2px;color:#667085;font-size:12px;">${label}</td></tr><tr><td style="padding:0 10px 10px;color:${color};font-size:22px;font-weight:700;">${count}<span style="font-size:12px;font-weight:400;margin-left:2px;">명</span></td></tr></table></td>`).join('');
   const sections = [
     reportSection('지각자', late.length, '#f59e0b', ['이름', '출근', '기준'], late.map((row) => [row.name, row.checkIn, row.schedule])),
     reportSection('미출근자', absent.length, '#ef4444', ['이름'], absent.map((row) => [row.name])),
     reportSection('조기퇴근자', early.length, '#8b5cf6', ['이름', '퇴근'], early.map((row) => [row.name, early.length ? row.checkOut : ''])),
     reportSection('휴가자', leave.length, '#10b981', ['이름', '휴가 구분'], leave.map((row) => [row.name, row.leaveName])),
   ].join('');
-  return `<!doctype html><html><head><meta charset="utf-8"><style>
-    body{margin:0;background:#f3f6fa;color:#172033;font-family:Arial,"Malgun Gothic",sans-serif;font-size:14px;line-height:1.5}
-    .wrap{max-width:720px;margin:0 auto;background:#fff}.header{padding:28px 32px 24px;background:#143b63;color:#fff}.brand{font-size:13px;opacity:.78;margin-bottom:8px}.title{font-size:24px;font-weight:700;margin:0 0 6px}.date{font-size:13px;opacity:.8}.content{padding:24px 32px 32px}.summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:26px}.card{border:1px solid #e6ebf1;border-radius:10px;padding:13px 12px;background:#fff}.card-label{font-size:12px;color:#667085;display:flex;align-items:center;gap:6px}.card-value{font-size:25px;font-weight:700;margin-top:5px}.card-value small{font-size:12px;font-weight:400;margin-left:2px;color:#667085}.dot{width:8px;height:8px;border-radius:50%;display:inline-block}.section{margin-top:22px}.section-title{display:flex;align-items:center;gap:8px;font-size:16px;font-weight:700;margin-bottom:8px}.section-title strong{margin-left:auto;font-size:13px;color:#667085;font-weight:500}table{width:100%;border-collapse:collapse;border:1px solid #e6ebf1;border-radius:8px;overflow:hidden}th{background:#f8fafc;color:#667085;font-size:12px;font-weight:600;text-align:left;padding:9px 12px;border-bottom:1px solid #e6ebf1}td{padding:10px 12px;border-bottom:1px solid #eef1f5}tr:last-child td{border-bottom:0}.empty{text-align:center;color:#98a2b3;padding:15px}.footer{padding:16px 32px;border-top:1px solid #eef1f5;color:#98a2b3;font-size:11px;text-align:center}@media(max-width:560px){.content,.header,.footer{padding-left:18px;padding-right:18px}.summary{grid-template-columns:repeat(2,1fr)}}
-  </style></head><body><div class="wrap"><header class="header"><div class="brand">DREAMBAY ATTENDANCE</div><h1 class="title">전일 근무일정</h1><div class="date">기준일 ${escapeHtml(workDate)} · 재직자 ${employees.length}명</div></header><main class="content"><div class="summary">${cards}</div>${sections}</main><footer class="footer">드림베이 근태관리시스템에서 자동 발송된 메일입니다.</footer></div></body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0;padding:0;background:#f3f5f8;color:#172033;font-family:Arial,'Malgun Gothic',sans-serif;font-size:14px;line-height:1.5;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f3f5f8;"><tr><td align="center" style="padding:24px 10px;"><table role="presentation" width="680" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:680px;background:#ffffff;border:1px solid #e4e7ec;"><tr><td style="padding:26px 30px 23px;background:#173f68;color:#ffffff;"><div style="font-size:12px;letter-spacing:.4px;color:#b9cbe0;">DREAMBAY ATTENDANCE</div><div style="font-size:24px;font-weight:700;margin-top:6px;">전일 근무일정</div><div style="font-size:13px;color:#d5e1ee;margin-top:5px;">기준일 ${escapeHtml(workDate)} · 재직자 ${employees.length}명</div></td></tr><tr><td style="padding:24px 30px 30px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>${summary}</tr>${sections}</table></td></tr><tr><td style="padding:15px 30px;border-top:1px solid #eef1f5;text-align:center;color:#98a2b3;font-size:11px;">드림베이 근태관리시스템에서 자동 발송된 메일입니다.</td></tr></table></td></tr></table></body></html>`;
 }
 
 Deno.serve(async (request) => {
