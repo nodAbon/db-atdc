@@ -50,6 +50,27 @@ function formatMinutes(minutes: number) {
   return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
 }
 
+function leaveLabel(leave: any) {
+  const raw = String(leave?.leave_name || '').trim();
+  if (raw && !/^\d+$/.test(raw)) return raw;
+  const labels: Record<string, string> = {
+    '12': '연차',
+    '13': '공가',
+    '16': '오전반차',
+    '17': '오후반차',
+    '18': '경조휴가',
+    '51': '연차',
+    '61': '오전반차',
+    '62': '오후반차',
+  };
+  const code = String(leave?.leave_code || '');
+  return labels[code] || (Number(leave?.leave_days || 0) >= 1 ? '연차' : '휴가');
+}
+
+function hasLeaveCode(leaves: any[], codes: string[]) {
+  return leaves.some((leave) => codes.includes(String(leave?.leave_code || '')));
+}
+
 function escapeHtml(value: unknown) {
   return String(value ?? '').replace(/[&<>\"']/g, (character) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -159,11 +180,16 @@ Deno.serve(async (request) => {
     const employees = await supabaseRequest('db_employees?company_code=eq.1700&is_active=eq.true&select=emp_no,name,dept');
     const schedules = await supabaseRequest('db_employee_schedules?select=emp_no,schedule_time');
     const logs = await supabaseRequest(`db_attendance?a_time=gte.${dateStart}000000&a_time=lte.${dateStart}235959&select=emp_no,a_time&order=a_time.asc`);
-    const leaves = await supabaseRequest(`db_leaves?start_date=lte.${dateStart}&end_date=gte.${dateStart}&status=eq.40&select=emp_no,leave_name,leave_days`);
+    const leaves = await supabaseRequest(`db_leaves?start_date=lte.${dateStart}&end_date=gte.${dateStart}&status=eq.40&select=emp_no,leave_code,leave_name,leave_days`);
 
     const employeeMap = new Map((employees || []).map((row: any) => [normalizeEmpNo(row.emp_no), row]));
     const scheduleMap = new Map((schedules || []).map((row: any) => [normalizeEmpNo(row.emp_no), toMinutes(row.schedule_time)]));
-    const leaveMap = new Map((leaves || []).map((row: any) => [normalizeEmpNo(row.emp_no), row]));
+    const leaveMap = new Map<string, any[]>();
+    for (const row of leaves || []) {
+      const empNo = normalizeEmpNo(row.emp_no);
+      if (!leaveMap.has(empNo)) leaveMap.set(empNo, []);
+      leaveMap.get(empNo)?.push(row);
+    }
     const logMap = new Map<string, string[]>();
     for (const row of logs || []) {
       const empNo = normalizeEmpNo(row.emp_no);
@@ -177,9 +203,10 @@ Deno.serve(async (request) => {
     for (const employee of employees || []) {
       const empNo = normalizeEmpNo(employee.emp_no);
       const employeeLogs = logMap.get(empNo) || [];
-      const leave = leaveMap.get(empNo);
+      const employeeLeaves = leaveMap.get(empNo) || [];
+      const fullDayLeave = employeeLeaves.some((leave) => Number(leave.leave_days || 0) >= 1);
       if (!employeeLogs.length) {
-        if (!leave) absent.push(employee);
+        if (!employeeLeaves.length && employee.name !== '김민교') absent.push(employee);
         continue;
       }
       const first = displayTime(employeeLogs[0]);
@@ -187,16 +214,18 @@ Deno.serve(async (request) => {
       const scheduleMinutes = scheduleMap.get(empNo) ?? 540;
       const firstMinutes = toMinutes(first);
       const lastMinutes = toMinutes(last);
-      if (firstMinutes > scheduleMinutes && !(leave && Number(leave.leave_days || 0) >= 1)) {
+      const lateLimit = hasLeaveCode(employeeLeaves, ['16', '61']) ? 14 * 60 : scheduleMinutes;
+      if (firstMinutes > lateLimit && !fullDayLeave) {
         late.push({ name: employee.name, checkIn: first, schedule: formatMinutes(scheduleMinutes) });
       }
-      if (lastMinutes < 18 * 60 && employeeLogs.length > 1) {
+      const earlyLimit = hasLeaveCode(employeeLeaves, ['17', '62']) ? 14 * 60 : 18 * 60;
+      if (lastMinutes < earlyLimit && employeeLogs.length > 1 && employee.name !== '김민주') {
         early.push({ name: employee.name, checkOut: last });
       }
     }
-    const leaveRows = [...leaveMap.entries()].map(([empNo, row]: [string, any]) => ({
+    const leaveRows = [...leaveMap.entries()].map(([empNo, rows]: [string, any[]]) => ({
       name: employeeMap.get(empNo)?.name || empNo,
-      leaveName: row.leave_name || (Number(row.leave_days || 0) >= 1 ? '연차' : '반차/시간휴가'),
+      leaveName: rows.map((row) => leaveLabel(row)).join(', '),
     }));
     const message = buildReport({ workDate, late, absent, early, leave: leaveRows, employees });
     const providerMessageId = await sendMail(`[드림베이 전일 근무일정] ${workDate}`, message);
