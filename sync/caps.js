@@ -11,7 +11,6 @@ const { createClient } = require('@supabase/supabase-js');
 
 loadSyncEnv();
 
-const SYNC_INTERVAL_MS = parseInt(process.env.SYNC_INTERVAL_MS, 10) || 1800000;
 const MY_COMPANY_CODE = process.env.MY_COMPANY_CODE || '1700';
 const E_GROUP_FILTER = process.env.CAPS_E_GROUP || '09';
 

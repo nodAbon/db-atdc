@@ -14,7 +14,8 @@ const { syncLeaves } = require('./leaves');
 
 loadSyncEnv();
 
-const SYNC_INTERVAL_MS = parseInt(process.env.SYNC_INTERVAL_MS, 10) || 1800000;
+// 운영 동기화 주기는 항상 30분이다. 이전 프로세스 환경값은 의도적으로 무시한다.
+const SYNC_INTERVAL_MS = 30 * 60 * 1000;
 const MY_COMPANY_CODE = process.env.MY_COMPANY_CODE || '1700';
 
 const MYSQL_CONFIG = {
@@ -53,7 +54,7 @@ async function runCycle() {
 }
 
 async function main() {
-  log(`db-atdc 동기화 데몬 시작 (${SYNC_INTERVAL_MS / 1000}초 주기)`);
+  log(`db-atdc 동기화 데몬 시작 (${SYNC_INTERVAL_MS / 60000}분 / ${SYNC_INTERVAL_MS}ms 주기)`);
   await runCycle();
   setInterval(runCycle, SYNC_INTERVAL_MS);
 }

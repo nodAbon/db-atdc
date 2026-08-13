@@ -1,0 +1,8 @@
+[functions.naverworks-bot-callback]
+verify_jwt = false
+
+[functions.daily-late-mail]
+verify_jwt = false
+
+[functions.send-late-alert]
+verify_jwt = true

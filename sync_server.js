@@ -23,6 +23,9 @@ const fs = require('fs');
 const path = require('path');
 const mysql = require('mysql2/promise');
 const { createClient } = require('@supabase/supabase-js');
+const Holidays = require('date-holidays');
+
+const SYNC_INTERVAL_MS = 30 * 60 * 1000;
 
 // ------------------------------------------------------------------------------
 // 1. 환경변수 및 기본 설정 (.env 자동 탐색 + Fallback 기본값)
@@ -80,8 +83,10 @@ const CONFIG = {
   // 법인 및 캡스 필터
   companyCode: process.env.MY_COMPANY_CODE || process.env.COMPANY_CODE || '1700',
   capsGroup: process.env.CAPS_E_GROUP || '09',
-  syncIntervalMs: parseInt(process.env.SYNC_INTERVAL_MS, 10) || 30 * 60 * 1000, // 기본 30분
+  // 운영 동기화 주기는 항상 30분이다. 이전 PM2 환경값(600000)이 남아 있어도 사용하지 않는다.
+  syncIntervalMs: SYNC_INTERVAL_MS,
   attendanceLookbackMinutes: parseInt(process.env.ATTENDANCE_LOOKBACK_MINUTES, 10) || 60, // 기본 최근 1시간 출입로그 동기화
+  attendanceAlertsEnabled: String(process.env.ATTENDANCE_ALERTS_ENABLED || 'true').toLowerCase() === 'true',
 };
 
 // Supabase 키 유효성 검사 및 안내
@@ -95,6 +100,7 @@ if (!CONFIG.supabase.serviceRoleKey) {
 const supabase = createClient(CONFIG.supabase.url, CONFIG.supabase.serviceRoleKey, {
   auth: { autoRefreshToken: false, persistSession: false },
 });
+const koreaHolidays = new Holidays('KR');
 
 // ------------------------------------------------------------------------------
 // 2. 헬퍼 함수
@@ -125,6 +131,53 @@ function buildGateName(row) {
     .map((value) => String(value ?? '').trim())
     .filter(Boolean);
   return parts.length > 0 ? parts.join(' / ') : 'CAPS';
+}
+
+function getKstDateKey() {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Seoul',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+}
+
+function isKstWorkday() {
+  const now = new Date();
+  const weekday = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Seoul',
+    weekday: 'short',
+  }).format(now);
+  if (weekday === 'Sat' || weekday === 'Sun') return false;
+  return !koreaHolidays.isHoliday(new Date(`${getKstDateKey()}T12:00:00+09:00`));
+}
+
+async function notifyArrivalIssues() {
+  if (!CONFIG.attendanceAlertsEnabled) {
+    log('INFO', '근태 알림 기능이 비활성화되어 있습니다.');
+    return;
+  }
+  if (!isKstWorkday()) {
+    log('INFO', '주말 또는 공휴일이므로 출근 알림 판정을 건너뜁니다.');
+    return;
+  }
+
+  const result = await fetch(`${CONFIG.supabase.url}/functions/v1/send-late-alert`, {
+    method: 'POST',
+    headers: {
+      apikey: CONFIG.supabase.serviceRoleKey,
+      Authorization: `Bearer ${CONFIG.supabase.serviceRoleKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ mode: 'arrival-alert' }),
+  });
+  const body = await result.json().catch(() => ({}));
+  if (!result.ok) throw new Error(`근태 알림 호출 실패: HTTP ${result.status}`);
+  if (body.skipped === 'no_team_recipients') {
+    log('WARN', '등록된 팀장 봇 수신자가 없어 근태 알림을 보내지 않았습니다.');
+    return;
+  }
+  log('SUCCESS', `근태 알림 판정 완료: 대상 ${body.candidateCount || 0}명 / 신규 발송 ${body.sentCount || 0}명`);
 }
 
 // ------------------------------------------------------------------------------
@@ -370,6 +423,7 @@ async function executeFullSync() {
     const empCount = await syncEmployees(conn);
     const leaveCount = await syncLeaves(conn);
     const capsCount = await syncCapsAttendance(conn);
+    await notifyArrivalIssues();
 
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
     console.log('----------------------------------------------------------------');
@@ -402,7 +456,7 @@ async function main() {
     await executeFullSync();
     process.exit(0);
   } else {
-    log('INFO', `데몬 모드로 실행합니다. (동기화 주기: ${CONFIG.syncIntervalMs / 1000}초)`);
+    log('INFO', `데몬 모드로 실행합니다. (동기화 주기: ${CONFIG.syncIntervalMs / 60000}분 / ${CONFIG.syncIntervalMs}ms)`);
     await executeFullSync();
     setInterval(executeFullSync, CONFIG.syncIntervalMs);
   }
