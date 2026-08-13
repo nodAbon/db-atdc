@@ -23,7 +23,6 @@ const fs = require('fs');
 const path = require('path');
 const mysql = require('mysql2/promise');
 const { createClient } = require('@supabase/supabase-js');
-const Holidays = require('date-holidays');
 
 const SYNC_INTERVAL_MS = 30 * 60 * 1000;
 
@@ -66,27 +65,27 @@ loadEnv();
 const CONFIG = {
   // MySQL 원본 DB (읽기 전용)
   mysql: {
-    host: process.env.MYSQL_HOST || 'Prd-Hecto-WHR-Ext-NLB-8e82b66ed560637d.elb.ap-northeast-2.amazonaws.com',
-    user: process.env.MYSQL_USER || 'secomncaps',
-    password: process.env.MYSQL_PASSWORD || 'Hecto12#$',
-    database: process.env.MYSQL_DATABASE || 'whr',
+    host: process.env.MYSQL_HOST,
+    user: process.env.MYSQL_USER,
+    password: process.env.MYSQL_PASSWORD,
+    database: process.env.MYSQL_DATABASE,
     port: parseInt(process.env.MYSQL_PORT, 10) || 3306,
     connectTimeout: 20000,
   },
 
   // Supabase (저장소)
   supabase: {
-    url: process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://gbfoempwoeurhhlxqxgy.supabase.co',
-    serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '',
+    url: process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL,
+    serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY || '',
   },
 
   // 법인 및 캡스 필터
-  companyCode: process.env.MY_COMPANY_CODE || process.env.COMPANY_CODE || '1700',
-  capsGroup: process.env.CAPS_E_GROUP || '09',
+  // 드림베이 전용: 환경변수 오염으로 1600 자료가 섞이지 않도록 고정한다.
+  companyCode: '1700',
+  capsGroup: '09',
   // 운영 동기화 주기는 항상 30분이다. 이전 PM2 환경값(600000)이 남아 있어도 사용하지 않는다.
   syncIntervalMs: SYNC_INTERVAL_MS,
   attendanceLookbackMinutes: parseInt(process.env.ATTENDANCE_LOOKBACK_MINUTES, 10) || 60, // 기본 최근 1시간 출입로그 동기화
-  attendanceAlertsEnabled: String(process.env.ATTENDANCE_ALERTS_ENABLED || 'true').toLowerCase() === 'true',
 };
 
 // Supabase 키 유효성 검사 및 안내
@@ -100,15 +99,20 @@ if (!CONFIG.supabase.serviceRoleKey) {
 const supabase = createClient(CONFIG.supabase.url, CONFIG.supabase.serviceRoleKey, {
   auth: { autoRefreshToken: false, persistSession: false },
 });
-const koreaHolidays = new Holidays('KR');
 
 // ------------------------------------------------------------------------------
 // 2. 헬퍼 함수
 // ------------------------------------------------------------------------------
+function timestamp() {
+  const kst = new Date(Date.now() + 9 * 60 * 60 * 1000);
+  const hour24 = kst.getUTCHours();
+  const period = hour24 < 12 ? '오전' : '오후';
+  return `${kst.getUTCFullYear()}. ${kst.getUTCMonth() + 1}. ${kst.getUTCDate()}. ${period} ${hour24 % 12 || 12}:${String(kst.getUTCMinutes()).padStart(2, '0')}:${String(kst.getUTCSeconds()).padStart(2, '0')}`;
+}
+
 function log(level, message, detail = '') {
-  const now = new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' });
-  const prefix = { INFO: 'ℹ️ [INFO]', SUCCESS: '✅ [SUCCESS]', WARN: '⚠️ [WARN]', ERROR: '❌ [ERROR]' }[level] || '[LOG]';
-  console.log(`[${now}] ${prefix} ${message}${detail ? ` | ${detail}` : ''}`);
+  const prefix = { INFO: '✅', SUCCESS: '✅', WARN: '⚠️', ERROR: '❌' }[level] || 'ℹ️';
+  console.log(`[${timestamp()}] ${prefix} ${message}${detail ? ` | ${detail}` : ''}`);
 }
 
 function normalizeEmpNo(value) {
@@ -142,50 +146,34 @@ function getKstDateKey() {
   }).format(new Date());
 }
 
-function isKstWorkday() {
-  const now = new Date();
-  const weekday = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'Asia/Seoul',
-    weekday: 'short',
-  }).format(now);
-  if (weekday === 'Sat' || weekday === 'Sun') return false;
-  return !koreaHolidays.isHoliday(new Date(`${getKstDateKey()}T12:00:00+09:00`));
+function getKstHour() {
+  return Number(new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Seoul', hour: '2-digit', hourCycle: 'h23',
+  }).format(new Date()));
 }
 
-async function notifyArrivalIssues() {
-  if (!CONFIG.attendanceAlertsEnabled) {
-    log('INFO', '근태 알림 기능이 비활성화되어 있습니다.');
-    return;
-  }
-  if (!isKstWorkday()) {
-    log('INFO', '주말 또는 공휴일이므로 출근 알림 판정을 건너뜁니다.');
-    return;
-  }
-
-  const result = await fetch(`${CONFIG.supabase.url}/functions/v1/send-late-alert`, {
-    method: 'POST',
-    headers: {
-      apikey: CONFIG.supabase.serviceRoleKey,
-      Authorization: `Bearer ${CONFIG.supabase.serviceRoleKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ mode: 'arrival-alert' }),
-  });
-  const body = await result.json().catch(() => ({}));
-  if (!result.ok) throw new Error(`근태 알림 호출 실패: HTTP ${result.status}`);
-  if (body.skipped === 'no_team_recipients') {
-    log('WARN', '등록된 팀장 봇 수신자가 없어 근태 알림을 보내지 않았습니다.');
-    return;
-  }
-  log('SUCCESS', `근태 알림 판정 완료: 대상 ${body.candidateCount || 0}명 / 신규 발송 ${body.sentCount || 0}명`);
+async function shouldSyncEmployeesToday() {
+  if (getKstHour() < 8) return { due: false, reason: '오전 8시 이전' };
+  const day = getKstDateKey();
+  const from = new Date(`${day}T00:00:00+09:00`);
+  const to = new Date(from.getTime() + 24 * 60 * 60 * 1000);
+  const { data, error } = await supabase
+    .from('db_employees')
+    .select('emp_no')
+    .eq('company_code', CONFIG.companyCode)
+    .gte('synced_at', from.toISOString())
+    .lt('synced_at', to.toISOString())
+    .limit(1);
+  if (error) throw new Error(`임직원 동기화 상태 조회 실패: ${error.message}`);
+  return data?.length
+    ? { due: false, reason: '오늘 이미 동기화됨' }
+    : { due: true, reason: '미동기화' };
 }
 
 // ------------------------------------------------------------------------------
 // 3. 임직원 마스터 동기화 (hr_employee -> db_employees)
 // ------------------------------------------------------------------------------
 async function syncEmployees(conn) {
-  log('INFO', `1/3 임직원 동기화 시작 (법인: ${CONFIG.companyCode})`);
-
   const [rows] = await conn.execute(`
     SELECT
       e.*,
@@ -201,15 +189,13 @@ async function syncEmployees(conn) {
     ORDER BY d.N_DEPT, e.N_EMPLOY_NAME
   `, [CONFIG.companyCode]);
 
-  if (!rows || rows.length === 0) {
-    log('WARN', '동기화 대상 임직원 데이터가 없습니다.');
-    return 0;
-  }
+  if (!rows || rows.length === 0) return 0;
 
   const empNos = rows.map((row) => normalizeEmpNo(row.emp_no)).filter(Boolean);
   const { data: existingRows, error: existingError } = await supabase
     .from('db_employees')
     .select('emp_no,is_active')
+    .eq('company_code', CONFIG.companyCode)
     .in('emp_no', empNos);
   if (existingError) throw new Error(`기존 재직상태 조회 실패: ${existingError.message}`);
   const existingByEmpNo = new Map((existingRows || []).map((row) => [row.emp_no, row]));
@@ -250,7 +236,6 @@ async function syncEmployees(conn) {
     throw new Error(`db_employees upsert 실패: ${error.message}`);
   }
 
-  log('SUCCESS', `임직원 동기화 완료: ${batch.length}명`);
   return batch.length;
 }
 
@@ -258,8 +243,6 @@ async function syncEmployees(conn) {
 // 4. 연차 사용내역 동기화 (hr_yuncha_use -> db_leaves)
 // ------------------------------------------------------------------------------
 async function syncLeaves(conn) {
-  log('INFO', `2/3 연차 사용내역 동기화 시작 (법인: ${CONFIG.companyCode})`);
-
   const now = new Date();
   const toDate = new Date(now.getFullYear(), now.getMonth() + 1, now.getDate());
   const fromStr = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
@@ -284,10 +267,7 @@ async function syncLeaves(conn) {
       AND y.D_END_DATE >= ?
   `, [CONFIG.companyCode, toStr, fromStr]);
 
-  if (!rows || rows.length === 0) {
-    log('INFO', '동기화 대상 연차 데이터가 없습니다.');
-    return 0;
-  }
+  if (!rows || rows.length === 0) return 0;
 
   const records = rows.map((r) => ({
     emp_no: normalizeEmpNo(r.emp_no),
@@ -319,7 +299,6 @@ async function syncLeaves(conn) {
     throw new Error(`db_leaves upsert 실패: ${error.message}`);
   }
 
-  log('SUCCESS', `연차 사용내역 동기화 완료: ${uniqueRecords.length}건`);
   return uniqueRecords.length;
 }
 
@@ -327,8 +306,6 @@ async function syncLeaves(conn) {
 // 5. CAPS 출입기록 동기화 (tenter -> db_attendance)
 // ------------------------------------------------------------------------------
 async function syncCapsAttendance(conn) {
-  log('INFO', `3/3 CAPS 출입기록 동기화 시작 (법인: ${CONFIG.companyCode}, 그룹: ${CONFIG.capsGroup})`);
-
   const now = new Date();
   const cutoff = new Date(now.getTime() - CONFIG.attendanceLookbackMinutes * 60 * 1000);
   const cutoffStr = `${cutoff.getFullYear()}${String(cutoff.getMonth() + 1).padStart(2, '0')}${String(cutoff.getDate()).padStart(2, '0')}${String(cutoff.getHours()).padStart(2, '0')}${String(cutoff.getMinutes()).padStart(2, '0')}${String(cutoff.getSeconds()).padStart(2, '0')}`;
@@ -361,10 +338,7 @@ async function syncCapsAttendance(conn) {
     ORDER BY t.E_DATE DESC, t.E_TIME DESC
   `, [CONFIG.companyCode, CONFIG.companyCode, CONFIG.capsGroup, cutoffStr]);
 
-  if (!rows || rows.length === 0) {
-    log('INFO', `최근 ${CONFIG.attendanceLookbackMinutes}분 대상 CAPS 출입기록이 없습니다.`);
-    return 0;
-  }
+  if (!rows || rows.length === 0) return 0;
 
   const batchSize = 500;
   let total = 0;
@@ -401,7 +375,6 @@ async function syncCapsAttendance(conn) {
     total += batch.length;
   }
 
-  log('SUCCESS', `CAPS 출입기록 동기화 완료: ${total}건 (최근 ${CONFIG.attendanceLookbackMinutes}분)`);
   return total;
 }
 
@@ -409,40 +382,63 @@ async function syncCapsAttendance(conn) {
 // 6. 전체 동기화 사이클 실행기
 // ------------------------------------------------------------------------------
 async function executeFullSync() {
+  if (executeFullSync.inProgress) {
+    log('WARN', '동기화 건너뜀 (이전 동기화 진행 중)');
+    return;
+  }
+
+  executeFullSync.inProgress = true;
   const startTime = Date.now();
-  console.log('\n================================================================');
-  log('INFO', `🚀 db-atdc 전체 동기화 사이클 시작 [법인: ${CONFIG.companyCode} / 캡스: ${CONFIG.capsGroup}]`);
-  console.log('================================================================');
+  log('INFO', '동기화 시작');
 
   let conn = null;
   try {
-    log('INFO', `MySQL 접속 시도 중: ${CONFIG.mysql.host}:${CONFIG.mysql.port} / DB: ${CONFIG.mysql.database}`);
     conn = await mysql.createConnection(CONFIG.mysql);
-    log('SUCCESS', 'MySQL 연결 성공');
 
-    const empCount = await syncEmployees(conn);
+    const employeeStatus = await shouldSyncEmployeesToday();
+    if (employeeStatus.due) {
+      const empCount = await syncEmployees(conn);
+      log('INFO', `임직원 정보 동기화 완료 (${empCount}건)`);
+    } else {
+      log('INFO', `임직원 정보 동기화 건너뜀 (${employeeStatus.reason})`);
+    }
+
     const leaveCount = await syncLeaves(conn);
     const capsCount = await syncCapsAttendance(conn);
-    await notifyArrivalIssues();
 
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-    console.log('----------------------------------------------------------------');
-    log('SUCCESS', `✨ 전체 동기화 성공 (${elapsed}초 소요)`);
-    log('INFO', `📊 집계 요약: 임직원 ${empCount}명 | 연차 ${leaveCount}건 | CAPS 출입기록 ${capsCount}건`);
-    console.log('================================================================\n');
+    log('SUCCESS', `동기화 완료 (${elapsed}s) | 캡스 ${capsCount}건 | 연차 ${leaveCount}건`);
   } catch (error) {
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-    log('ERROR', `동기화 도중 오류 발생 (${elapsed}초 경과)`, error.message);
-    if (error.code === 'ETIMEDOUT') {
-      log('WARN', '네트워크 타임아웃: 서버PC의 VPN 연결 또는 AWS 보안그룹 인가 상태를 확인하세요.');
-    }
+    log('ERROR', `동기화 실패 (${elapsed}s)`, error.message);
   } finally {
+    executeFullSync.inProgress = false;
     if (conn) {
       try {
         await conn.end();
       } catch (e) {}
     }
   }
+}
+
+function millisecondsUntilNextEightKst() {
+  const now = Date.now();
+  const kstNow = new Date(now + 9 * 60 * 60 * 1000);
+  let target = Date.UTC(
+    kstNow.getUTCFullYear(),
+    kstNow.getUTCMonth(),
+    kstNow.getUTCDate(),
+    -1, 0, 0,
+  );
+  if (target <= now + 1000) target += 24 * 60 * 60 * 1000;
+  return target - now;
+}
+
+function scheduleDailyEightSync() {
+  setTimeout(async () => {
+    await executeFullSync();
+    scheduleDailyEightSync();
+  }, millisecondsUntilNextEightKst());
 }
 
 // ------------------------------------------------------------------------------
@@ -452,13 +448,12 @@ async function main() {
   const isOnce = process.argv.includes('--once') || process.argv.includes('-1');
 
   if (isOnce) {
-    log('INFO', '단발성 1회 실행 모드로 시작합니다.');
     await executeFullSync();
     process.exit(0);
   } else {
-    log('INFO', `데몬 모드로 실행합니다. (동기화 주기: ${CONFIG.syncIntervalMs / 60000}분 / ${CONFIG.syncIntervalMs}ms)`);
     await executeFullSync();
     setInterval(executeFullSync, CONFIG.syncIntervalMs);
+    scheduleDailyEightSync();
   }
 }
 
