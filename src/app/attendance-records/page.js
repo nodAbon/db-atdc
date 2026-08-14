@@ -535,7 +535,13 @@ function AttendanceRecordsContent() {
                           </span>
                         </td>
                         <td style={{ color: 'var(--text-2)', fontSize: 13 }}>
-                          {log.memo || '-'}
+                          {log.note ? (
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 8px', borderRadius: 6, backgroundColor: 'rgba(37,99,235,0.1)', color: 'var(--blue)', fontWeight: 600, fontSize: 12.5 }}>
+                              📜 {log.note}
+                            </span>
+                          ) : (
+                             log.memo || '-'
+                          )}
                         </td>
                         <td style={{ textAlign: 'center' }}>
                           <button type='button' onClick={() => setNoteModal({ isOpen: true, empNo: log.empNo, empName: log.name, dept: log.dept, workDate: log.dateDisplay, note: log.memo || '', imageUrl: null })} style={{ padding: '3px 8px', fontSize: 12, borderRadius: 6, border: '1px solid var(--border)', backgroundColor: 'var(--bg-card)', color: 'var(--blue)', cursor: 'pointer' }}>📝 사유</button>
