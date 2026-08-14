@@ -406,7 +406,9 @@ Deno.serve(async (request) => {
   const recipientUserId = typeof input?.recipientUserId === 'string' ? input.recipientUserId : '';
 
   try {
-    if (input?.mode === 'arrival-alert') return await handleArrivalAlerts();
+    if (input?.mode === 'arrival-alert') {
+      return response({ ok: true, skipped: 'team_alerts_disabled' });
+    }
     if (!recipientUserId) return response({ error: 'recipient_required' }, 400);
 
     if (input?.testLateReason === true) {

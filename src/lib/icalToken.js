@@ -1,13 +1,9 @@
 import crypto from 'crypto';
 
 const getSecret = () => {
-  return (
-    process.env.ICAL_SUBSCRIPTION_SECRET ||
-    process.env.SUPABASE_SERVICE_ROLE_KEY ||
-    process.env.SUPABASE_ANON_KEY ||
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-    'db-atdc-default-ical-secret-key-2026'
-  );
+  const secret = process.env.ICAL_SUBSCRIPTION_SECRET || process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!secret) throw new Error('iCal signing secret is not configured.');
+  return secret;
 };
 
 export function normalizeIcalDeptList(depts = []) {

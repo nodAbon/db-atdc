@@ -63,10 +63,14 @@ CREATE TABLE IF NOT EXISTS db_profiles (
   rank                 VARCHAR(50),  -- 직급
   position             VARCHAR(50),  -- 직책 (예: 팀장 등)
   is_admin             BOOLEAN DEFAULT FALSE,
+  is_global_admin      BOOLEAN NOT NULL DEFAULT FALSE,
   must_change_password BOOLEAN DEFAULT TRUE,
   created_at           TIMESTAMPTZ DEFAULT NOW(),
   updated_at           TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- The API upserts profiles by employee number as well as Auth user id.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_db_profiles_emp_no ON db_profiles (emp_no);
 
 -- ----------------------------------------------------------------
 -- 3. 근무 기준 및 일정 조정
@@ -77,6 +81,7 @@ CREATE TABLE IF NOT EXISTS db_employee_schedules (
   emp_no            VARCHAR(20) PRIMARY KEY REFERENCES db_employees(emp_no) ON DELETE CASCADE,
   schedule_time     TIME NOT NULL DEFAULT '09:00:00',
   schedule_end_time TIME DEFAULT '18:00:00',
+  schedule_reason   TEXT,
   updated_by        UUID REFERENCES auth.users(id),
   created_at        TIMESTAMPTZ DEFAULT NOW(),
   updated_at        TIMESTAMPTZ DEFAULT NOW()
@@ -149,6 +154,33 @@ CREATE TABLE IF NOT EXISTS db_ical_subscriptions (
 -- 6. Row Level Security (RLS) 및 권한 정책
 -- ----------------------------------------------------------------
 
+CREATE TABLE IF NOT EXISTS db_late_reason_requests (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  request_token UUID NOT NULL UNIQUE DEFAULT gen_random_uuid(),
+  work_date DATE NOT NULL,
+  emp_no TEXT,
+  employee_name TEXT NOT NULL,
+  check_in TIME,
+  schedule_time TIME NOT NULL,
+  leader_user_id TEXT NOT NULL,
+  alert_type TEXT NOT NULL DEFAULT 'late' CHECK (alert_type IN ('late', 'missing', 'test')),
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'awaiting_reason', 'completed', 'expired')),
+  reason TEXT,
+  responded_by TEXT,
+  expires_at TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '24 hours'),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS db_team_bot_recipients (
+  dept TEXT PRIMARY KEY,
+  leader_user_id TEXT NOT NULL,
+  leader_name TEXT,
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 ALTER TABLE db_employees                   ENABLE ROW LEVEL SECURITY;
 ALTER TABLE db_attendance                  ENABLE ROW LEVEL SECURITY;
 ALTER TABLE db_leaves                      ENABLE ROW LEVEL SECURITY;
@@ -158,28 +190,30 @@ ALTER TABLE db_schedule_overrides          ENABLE ROW LEVEL SECURITY;
 ALTER TABLE db_attendance_corrections      ENABLE ROW LEVEL SECURITY;
 ALTER TABLE db_attendance_log_adjustments  ENABLE ROW LEVEL SECURITY;
 ALTER TABLE db_ical_subscriptions          ENABLE ROW LEVEL SECURITY;
+ALTER TABLE db_late_reason_requests        ENABLE ROW LEVEL SECURITY;
+ALTER TABLE db_team_bot_recipients         ENABLE ROW LEVEL SECURITY;
 
 -- 헬퍼 함수
 CREATE OR REPLACE FUNCTION db_is_admin()
 RETURNS BOOLEAN AS $$
   SELECT COALESCE(
-    (SELECT is_admin FROM db_profiles WHERE id = auth.uid()),
+    (SELECT is_admin FROM public.db_profiles WHERE id = auth.uid()),
     FALSE
   );
-$$ LANGUAGE sql SECURITY DEFINER;
+$$ LANGUAGE sql SECURITY DEFINER SET search_path = '';
 
 CREATE OR REPLACE FUNCTION db_is_leader()
 RETURNS BOOLEAN AS $$
   SELECT COALESCE(
-    (SELECT position = '팀장' FROM db_profiles WHERE id = auth.uid()),
+    (SELECT position IN ('팀장', '실장') FROM public.db_profiles WHERE id = auth.uid()),
     FALSE
   );
-$$ LANGUAGE sql SECURITY DEFINER;
+$$ LANGUAGE sql SECURITY DEFINER SET search_path = '';
 
 CREATE OR REPLACE FUNCTION db_my_emp_no()
 RETURNS VARCHAR AS $$
-  SELECT emp_no FROM db_profiles WHERE id = auth.uid();
-$$ LANGUAGE sql SECURITY DEFINER;
+  SELECT emp_no FROM public.db_profiles WHERE id = auth.uid();
+$$ LANGUAGE sql SECURITY DEFINER SET search_path = '';
 
 -- 정책 정의
 CREATE POLICY "db_employees_admin"    ON db_employees FOR ALL    USING (db_is_admin() OR db_is_leader());
@@ -194,7 +228,6 @@ CREATE POLICY "db_leaves_self"        ON db_leaves FOR SELECT USING (emp_no = db
 CREATE POLICY "db_profiles_admin"     ON db_profiles FOR ALL    USING (db_is_admin());
 CREATE POLICY "db_profiles_leader"    ON db_profiles FOR SELECT USING (db_is_leader());
 CREATE POLICY "db_profiles_self"      ON db_profiles FOR SELECT USING (id = auth.uid());
-CREATE POLICY "db_profiles_self_upd"  ON db_profiles FOR UPDATE USING (id = auth.uid());
 
 CREATE POLICY "db_employee_schedules_admin" ON db_employee_schedules FOR ALL    USING (db_is_admin() OR db_is_leader());
 CREATE POLICY "db_employee_schedules_self"  ON db_employee_schedules FOR SELECT USING (emp_no = db_my_emp_no());
@@ -210,6 +243,13 @@ CREATE POLICY "db_attendance_log_adjustments_self"  ON db_attendance_log_adjustm
 
 CREATE POLICY "db_ical_subscriptions_admin" ON db_ical_subscriptions FOR ALL USING (db_is_admin() OR db_is_leader()) WITH CHECK (db_is_admin() OR db_is_leader());
 
+-- All application access goes through authenticated server routes. Prevent
+-- direct use of the public anon key from bypassing those route-level checks.
+REVOKE ALL ON TABLE db_employees, db_attendance, db_leaves, db_profiles,
+  db_employee_schedules, db_schedule_overrides, db_attendance_corrections,
+  db_attendance_log_adjustments, db_ical_subscriptions, db_late_reason_requests,
+  db_team_bot_recipients FROM anon, authenticated;
+
 -- ----------------------------------------------------------------
 -- 7. 인덱스
 -- ----------------------------------------------------------------
@@ -217,9 +257,33 @@ CREATE POLICY "db_ical_subscriptions_admin" ON db_ical_subscriptions FOR ALL USI
 CREATE INDEX IF NOT EXISTS idx_db_attendance_emp_no   ON db_attendance (emp_no);
 CREATE INDEX IF NOT EXISTS idx_db_attendance_log_time ON db_attendance (log_time DESC);
 CREATE INDEX IF NOT EXISTS idx_db_attendance_a_time   ON db_attendance (a_time DESC);
+CREATE INDEX IF NOT EXISTS idx_db_employees_login_id  ON db_employees (login_id);
+CREATE INDEX IF NOT EXISTS idx_db_employees_email     ON db_employees (email);
+CREATE INDEX IF NOT EXISTS idx_db_employees_active    ON db_employees (is_active);
+CREATE INDEX IF NOT EXISTS idx_db_profiles_emp_no    ON db_profiles (emp_no);
+CREATE INDEX IF NOT EXISTS idx_db_schedules_work_date ON db_schedule_overrides (work_date);
 CREATE INDEX IF NOT EXISTS idx_db_leaves_emp_no       ON db_leaves (emp_no);
 CREATE INDEX IF NOT EXISTS idx_db_leaves_dates        ON db_leaves (start_date, end_date);
 CREATE INDEX IF NOT EXISTS idx_db_corrections_emp     ON db_attendance_corrections (emp_no, work_date);
 CREATE INDEX IF NOT EXISTS idx_db_adjustments_emp_date ON db_attendance_log_adjustments (emp_no, work_date);
 CREATE INDEX IF NOT EXISTS idx_db_adjustments_att_id   ON db_attendance_log_adjustments (attendance_id);
 CREATE INDEX IF NOT EXISTS idx_db_ical_token           ON db_ical_subscriptions (token);
+CREATE INDEX IF NOT EXISTS idx_db_late_reason_requests_pending ON db_late_reason_requests (leader_user_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_db_late_reason_requests_dedupe ON db_late_reason_requests (work_date, emp_no, leader_user_id, alert_type);
+
+-- ----------------------------------------------------------------
+-- 8. 근태 사유 / 메모 관리 (db_attendance_notes)
+-- ----------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS db_attendance_notes (
+  id          BIGSERIAL PRIMARY KEY,
+  emp_no      VARCHAR(20) NOT NULL REFERENCES db_employees(emp_no) ON DELETE CASCADE,
+  work_date   DATE NOT NULL,
+  note        TEXT NOT NULL DEFAULT '',
+  image_url   TEXT,
+  created_at  TIMESTAMPTZ DEFAULT NOW(),
+  updated_at  TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (emp_no, work_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_db_attendance_notes_date ON db_attendance_notes (work_date);
+CREATE INDEX IF NOT EXISTS idx_db_attendance_notes_emp  ON db_attendance_notes (emp_no);

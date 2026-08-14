@@ -2,13 +2,17 @@ import { NextResponse } from 'next/server';
 import { buildLeaveIcsForDepartments } from '@/lib/icalFeed';
 import { MANAGEMENT_DEPTS } from '@/lib/ical';
 import { buildIcalHeaders } from '@/lib/icalHttp';
+import { requireApiSession, internalError } from '@/lib/apiAuth';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 export const fetchCache = 'force-no-store';
 
-export async function GET() {
+export async function GET(request) {
   try {
+    const auth = await requireApiSession(request, { roles: ['admin', 'leader'] });
+    if (auth.response) return auth.response;
+
     const ics = await buildLeaveIcsForDepartments({
       departments: MANAGEMENT_DEPTS,
       calendarName: '경영지원실 연차 현황',
@@ -21,7 +25,6 @@ export async function GET() {
       }),
     });
   } catch (error) {
-    console.error('[Management Leaves ICS GET]', error);
-    return NextResponse.json({ error: error?.message || '서버 오류가 발생했습니다.' }, { status: 500 });
+    return internalError('[Management Leaves ICS GET]', error, '캘린더를 생성하지 못했습니다.');
   }
 }

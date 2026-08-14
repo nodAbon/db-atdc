@@ -15,7 +15,14 @@ export const matchesDeptFilter = (itemDept, filterDept) => {
 };
 
 export const normalizeEmpNoKey = (value) => {
-  const digits = String(value ?? '').replace(/\D/g, '');
+  const text = String(value ?? '').trim();
+  const scoped = text.match(/^(\d{4}):(.+)$/);
+  if (scoped) {
+    const inner = normalizeEmpNoKey(scoped[2]);
+    return inner ? `${scoped[1]}:${inner}` : '';
+  }
+
+  const digits = text.replace(/\D/g, '');
   if (!digits) return '';
   if (digits.startsWith(COMPANY_CODE) && digits.length >= 12) {
     return digits.slice(COMPANY_CODE.length).slice(-8).replace(/^0+/, '') || digits.slice(-8);

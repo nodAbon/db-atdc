@@ -3,6 +3,8 @@
 import React, { memo, useMemo, useState } from 'react';
 import { CircleUserRound, Moon, Search, Sun } from 'lucide-react';
 import DashboardCalendarWidget from '../DashboardCalendarWidget';
+import AttendanceNoteModal from '../AttendanceNoteModal';
+import { getKstDateKey } from '../../lib/kstDate';
 import { getStatusBadgeMeta } from '../../lib/leaveRules';
 import { matchesDeptFilter, normalizeDeptName, formatTimeString } from '../../lib/dashboardUtils';
 
@@ -304,11 +306,12 @@ function DashboardTab({
           <div className="table-wrapper status-table-wrapper">
             <table className="table status-table dashboard-status-table" style={{ tableLayout: 'fixed', width: '100%' }}>
               <colgroup>
-                <col style={{ width: '24%' }} />
+                <col style={{ width: '22%' }} />
+                <col style={{ width: '16%' }} />
+                <col style={{ width: '15%' }} />
+                <col style={{ width: '15%' }} />
                 <col style={{ width: '18%' }} />
-                <col style={{ width: '17%' }} />
-                <col style={{ width: '17%' }} />
-                <col style={{ width: '24%' }} />
+                <col style={{ width: '14%' }} />
               </colgroup>
               <thead>
                 <tr>
@@ -317,6 +320,7 @@ function DashboardTab({
                   <th>기준 출근</th>
                   <th>출근</th>
                   <th>현재 상태</th>
+                  <th style={{ textAlign: 'center' }}>사유 / 메모</th>
                 </tr>
               </thead>
               <tbody>
@@ -340,7 +344,7 @@ function DashboardTab({
                   ))
                 ) : deptGroups.length === 0 ? (
                   <tr>
-                    <td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-3)', padding: '40px 16px' }}>
+                    <td colSpan={6} style={{ textAlign: 'center', color: 'var(--text-3)', padding: '40px 16px' }}>
                       조건에 맞는 직원이 없습니다.
                     </td>
                   </tr>
@@ -350,7 +354,7 @@ function DashboardTab({
                     return (
                       <React.Fragment key={group.dept}>
                         <tr className="dashboard-group-row">
-                          <td colSpan={5} style={{ padding: '0' }}>
+                          <td colSpan={6} style={{ padding: '0' }}>
                             <div className="dashboard-group-header">
                               <div className="dashboard-group-topline">
                                 <div className="dashboard-group-title">
@@ -380,7 +384,9 @@ function DashboardTab({
                                     <CircleUserRound size={17} strokeWidth={1.8} />
                                   </div>
                                   <div className="dashboard-emp-meta">
-                                    <div className="dashboard-emp-name">{emp.name}</div>
+                                    <div className="dashboard-emp-name">
+                                      {emp.name}
+                                    </div>
                                   </div>
                                 </div>
                               </td>

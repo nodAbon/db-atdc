@@ -36,8 +36,8 @@
   --shadow-card:    0 10px 28px rgba(0,0,0,0.18);
 
   /* Font */
-  --font: var(--font-outfit), 'Pretendard', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-  --mono: var(--font-mono), 'JetBrains Mono', 'Fira Mono', monospace;
+  --font: 'Pretendard', 'Segoe UI', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --mono: 'JetBrains Mono', 'Fira Mono', Consolas, monospace;
 
   /* Radius */
   --r-sm: 8px;
@@ -323,6 +323,16 @@ body {
 
 .sidebar-util-btn .util-icon {
   flex-shrink: 0;
+}
+
+.sidebar-util-btn span {
+  white-space: nowrap;
+}
+
+.sidebar-util-btn.logout-btn {
+  padding-inline: 7px;
+  font-size: 11px;
+  letter-spacing: -0.02em;
 }
 
 .sidebar-version {

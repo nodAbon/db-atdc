@@ -3,9 +3,13 @@ import {
   deleteIcalSubscriptionRecord,
   setIcalSubscriptionRecordActive,
 } from '@/lib/icalSubscriptions';
+import { requireApiSession, privateJson, internalError } from '@/lib/apiAuth';
 
 export async function PATCH(request, context) {
   try {
+    const auth = await requireApiSession(request, { roles: ['authenticated'], mutation: true });
+    if (auth.response) return auth.response;
+
     const params = await context?.params;
     const token = String(params?.token || '').trim();
     if (!token) {
@@ -16,15 +20,17 @@ export async function PATCH(request, context) {
     const active = typeof body?.active === 'boolean' ? body.active : true;
 
     await setIcalSubscriptionRecordActive(token, active);
-    return NextResponse.json({ success: true, active });
+    return privateJson({ success: true, active });
   } catch (error) {
-    console.error('[ICS Subscription Token PATCH]', error);
-    return NextResponse.json({ error: error?.message || '상태 변경에 실패했습니다.' }, { status: 500 });
+    return internalError('[ICS Subscription Token PATCH]', error, '상태 변경에 실패했습니다.');
   }
 }
 
-export async function DELETE(_request, context) {
+export async function DELETE(request, context) {
   try {
+    const auth = await requireApiSession(request, { roles: ['authenticated'], mutation: true });
+    if (auth.response) return auth.response;
+
     const params = await context?.params;
     const token = String(params?.token || '').trim();
     if (!token) {
@@ -32,9 +38,8 @@ export async function DELETE(_request, context) {
     }
 
     await deleteIcalSubscriptionRecord(token);
-    return NextResponse.json({ success: true });
+    return privateJson({ success: true });
   } catch (error) {
-    console.error('[ICS Subscription Token DELETE]', error);
-    return NextResponse.json({ error: error?.message || '삭제에 실패했습니다.' }, { status: 500 });
+    return internalError('[ICS Subscription Token DELETE]', error, '삭제에 실패했습니다.');
   }
 }

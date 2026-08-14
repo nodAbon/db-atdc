@@ -1,124 +1,133 @@
 import { cookies } from 'next/headers';
 import { supabaseAdmin } from './supabaseAdmin';
+import { AUTH_MODE_COOKIE, verifyAuthModeCookie } from './authMode';
 
-const getCookieValueFromHeader = (cookieHeader, name) => {
+function getCookieValue(cookieHeader, name) {
   if (!cookieHeader) return null;
   const match = cookieHeader.match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`));
   return match ? decodeURIComponent(match[1]) : null;
-};
+}
+
+async function getRequestCookie(request, name) {
+  const cookieHeader = request?.headers?.get?.('cookie') || '';
+  const headerToken = getCookieValue(cookieHeader, name);
+  if (headerToken) return headerToken;
+
+  try {
+    const cookieStore = await cookies();
+    return cookieStore.get(name)?.value || null;
+  } catch {
+    return null;
+  }
+}
 
 export async function verifySession(request) {
-  let accessToken = null;
-  let fallbackEmpNo = null;
-  let fallbackLoginId = null;
-
-  // 1. 헤더에서 쿠키 파싱
-  if (request?.headers) {
-    const cookieHeader = request.headers.get?.('cookie') || '';
-    accessToken = getCookieValueFromHeader(cookieHeader, 'sb-access-token');
-    fallbackEmpNo = getCookieValueFromHeader(cookieHeader, 'user-emp-no') || '';
-    fallbackLoginId = getCookieValueFromHeader(cookieHeader, 'user-login-id') || '';
-  }
-
-  // 2. Next.js cookies() API 시도
-  if (!accessToken) {
-    try {
-      const cookieStore = await cookies();
-      accessToken = cookieStore.get('sb-access-token')?.value || null;
-      if (!fallbackEmpNo) {
-        fallbackEmpNo = cookieStore.get('user-emp-no')?.value || '';
-      }
-      if (!fallbackLoginId) {
-        fallbackLoginId = cookieStore.get('user-login-id')?.value || '';
-      }
-    } catch {
-      // Cookies not accessible in current boundary
-    }
-  }
-
+  const accessToken = await getRequestCookie(request, 'sb-access-token');
   if (!accessToken) return null;
 
   try {
-    const { data: userData, error: authErr } = await supabaseAdmin.auth.getUser(accessToken);
-    if (authErr || !userData?.user) return null;
+    const { data: userData, error: authError } = await supabaseAdmin.auth.getUser(accessToken);
+    const authUser = userData?.user;
+    if (authError || !authUser?.id) return null;
 
-    const userId = userData.user.id;
-    const emailLoginId = userData.user.email?.split('@')[0] || '';
-    const loginId = fallbackLoginId || emailLoginId;
-
-    // 프로필 조회 (db_profiles)
-    let { data: profile } = await supabaseAdmin
+    // Authorization is derived only from the server-owned profile row. Never
+    // trust employee numbers, roles, or login IDs from client cookies.
+    const { data: profile, error: profileError } = await supabaseAdmin
       .from('db_profiles')
-      .select('id, emp_no, is_admin, position, rank, must_change_password')
-      .eq('id', userId)
+      .select('id,emp_no,dept,is_admin,is_global_admin,position,rank,must_change_password')
+      .eq('id', authUser.id)
       .maybeSingle();
 
-    if (!profile && fallbackEmpNo) {
-      const { data: fallbackProfile } = await supabaseAdmin
-        .from('db_profiles')
-        .select('id, emp_no, is_admin, position, rank, must_change_password')
-        .eq('emp_no', fallbackEmpNo)
-        .maybeSingle();
-      profile = fallbackProfile || null;
-    }
+    if (profileError || !profile) return null;
 
-    // 직원 정보 조회 (db_employees) - login_id, emp_no, email 모두 대응
-    let matchedEmployee = null;
-    const lookupKeys = [profile?.emp_no, fallbackEmpNo, loginId, emailLoginId].filter(Boolean);
-    if (lookupKeys.length > 0) {
-      const { data: empList } = await supabaseAdmin
-        .from('db_employees')
-        .select('*')
-        .or(`emp_no.in.(${lookupKeys.join(',')}),login_id.in.(${lookupKeys.join(',')}),email.eq.${userData.user.email}`)
-        .limit(1);
+    const authModeCookie = await getRequestCookie(request, AUTH_MODE_COOKIE);
+    const authMode = verifyAuthModeCookie(authUser.id, authModeCookie);
+    const isGlobalAdmin = profile.is_admin === true
+      && profile.is_global_admin === true
+      && authMode === 'master';
+    const isAdmin = profile.is_admin === true
+      && (profile.is_global_admin !== true || isGlobalAdmin);
 
-      if (empList && empList.length > 0) {
-        matchedEmployee = empList[0];
-      }
-    }
+    // A system administrator may be an Auth-only account that is intentionally
+    // not part of the employee/attendance master. Non-admin users must always
+    // remain linked to an active employee record.
+    if (!profile.emp_no) {
+      const email = authUser.email || '';
+      if (!isGlobalAdmin) {
+        const { data: employee, error: employeeError } = await supabaseAdmin
+          .from('sa_employees')
+          .select('emp_no,name,dept,email,login_id,is_active,company_code')
+          .eq('email', email)
+          .eq('is_active', true)
+          .maybeSingle();
 
-    const realEmpNo = matchedEmployee?.emp_no || profile?.emp_no || fallbackEmpNo || loginId;
-    const realLoginId = matchedEmployee?.login_id || loginId;
-    const realName = matchedEmployee?.name || userData.user.user_metadata?.name || loginId;
-    const realDept = matchedEmployee?.dept || '';
-
-    const isAdmin = Boolean(profile?.is_admin || realLoginId === 'admin' || profile?.position === '관리자' || profile?.position === '대표이사');
-    const isLeader = Boolean(profile?.position === '팀장' || profile?.position === '실장' || isAdmin);
-
-    // 부트스트랩 프로필 생성
-    if (!profile && userId && realEmpNo) {
-      try {
-        await supabaseAdmin.from('db_profiles').upsert({
-          id: userId,
-          emp_no: realEmpNo,
-          dept: realDept,
-          rank: '',
+        if (employeeError || !employee) return null;
+        return {
+          userId: authUser.id,
+          empNo: employee.emp_no,
+          name: employee.name || authUser.user_metadata?.display_name || employee.login_id,
+          loginId: employee.login_id || email.split('@')[0] || '',
+          email,
+          isAdmin: false,
+          isGlobalAdmin: false,
+          isLeader: false,
           position: '',
-          is_admin: isAdmin,
-          must_change_password: false,
-          updated_at: new Date().toISOString(),
-        }, { onConflict: 'id' });
-      } catch (e) {
-        console.warn('verifySession bootstrap warning:', e.message);
+          team: employee.dept || '',
+          dept: employee.dept || '',
+          rank: '',
+          companyCode: employee.company_code || '1600',
+          mustChangePassword: profile.must_change_password === true,
+        };
       }
+
+      return {
+        userId: authUser.id,
+        empNo: null,
+        name: authUser.user_metadata?.name
+          || authUser.user_metadata?.display_name
+          || email.split('@')[0]
+          || '시스템 관리자',
+        loginId: email.split('@')[0] || '',
+        email,
+        isAdmin: true,
+        isGlobalAdmin: true,
+        isLeader: true,
+        position: profile.position || '시스템 관리자',
+        team: profile.dept || '시스템 관리',
+        dept: profile.dept || '시스템 관리',
+        rank: profile.rank || '',
+        mustChangePassword: profile.must_change_password === true,
+      };
     }
+
+    const { data: employee, error: employeeError } = await supabaseAdmin
+      .from('db_employees')
+      .select('emp_no,name,dept,email,login_id,is_active')
+      .eq('emp_no', profile.emp_no)
+      .eq('is_active', true)
+      .maybeSingle();
+
+    if (employeeError || !employee) return null;
+
+    const isLeader = isAdmin || profile.position === '팀장' || profile.position === '실장';
 
     return {
-      userId,
-      empNo: realEmpNo,
-      name: realName,
-      loginId: realLoginId,
-      email: userData.user.email,
+      userId: authUser.id,
+      empNo: employee.emp_no,
+      name: employee.name || authUser.user_metadata?.name || employee.login_id,
+      loginId: employee.login_id || authUser.email?.split('@')[0] || '',
+      email: authUser.email || employee.email || '',
       isAdmin,
+      isGlobalAdmin,
       isLeader,
-      position: profile?.position || '',
-      team: realDept,
-      dept: realDept,
-      rank: profile?.rank || '',
-      mustChangePassword: Boolean(profile?.must_change_password),
+      position: profile.position || '',
+      team: employee.dept || profile.dept || '',
+      dept: employee.dept || profile.dept || '',
+      rank: profile.rank || '',
+      mustChangePassword: profile.must_change_password === true,
     };
-  } catch (e) {
-    console.error('verifySession error:', e);
+  } catch (error) {
+    console.error('verifySession error:', error);
     return null;
   }
 }

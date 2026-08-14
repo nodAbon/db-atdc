@@ -45,7 +45,12 @@ export const buildEmployeeScheduleMap = (rows = []) => new Map(
         row?.schedule_end_time || row?.scheduleEndTime || '',
         ''
       );
-      return [empNo, { start, end, updatedAt: row?.updated_at || row?.updatedAt || null }];
+      return [empNo, {
+        start,
+        end,
+        reason: String(row?.schedule_reason || row?.scheduleReason || '').trim(),
+        updatedAt: row?.updated_at || row?.updatedAt || null,
+      }];
     })
     .filter(Boolean)
 );

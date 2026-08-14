@@ -5,17 +5,9 @@ import {
   createIcalSubscriptionRecord,
   listIcalSubscriptionRecords,
 } from '@/lib/icalSubscriptions';
+import { requireApiSession, privateJson, internalError } from '@/lib/apiAuth';
 
 function getPublicBaseUrl(request) {
-  const host = request.headers.get('x-forwarded-host') || request.headers.get('host') || new URL(request.url).host;
-  const isLocalHost = ['localhost', '127.0.0.1', '::1'].some((h) => host.includes(h));
-
-  // 실제 Vercel / 운영 도메인 접속 시에는 무조건 실제 접속된 도메인을 사용
-  if (!isLocalHost) {
-    const proto = request.headers.get('x-forwarded-proto') || 'https';
-    return `${proto}://${host}`.replace(/\/$/, '');
-  }
-
   const configured =
     process.env.NEXT_PUBLIC_SITE_URL ||
     process.env.SITE_URL ||
@@ -28,11 +20,16 @@ function getPublicBaseUrl(request) {
     return normalized.replace(/\/$/, '');
   }
 
-  return `http://${host}`.replace(/\/$/, '');
+  const requestUrl = new URL(request.url);
+  if (['localhost', '127.0.0.1', '::1'].includes(requestUrl.hostname)) return requestUrl.origin;
+  return 'https://db-atdc.vercel.app';
 }
 
 export async function GET(request) {
   try {
+    const auth = await requireApiSession(request, { roles: ['authenticated'] });
+    if (auth.response) return auth.response;
+
     const baseUrl = getPublicBaseUrl(request);
     const records = await listIcalSubscriptionRecords();
     const subscriptions = records.map((record) => {
@@ -52,19 +49,17 @@ export async function GET(request) {
       };
     });
 
-    return NextResponse.json({ success: true, subscriptions }, {
-      headers: {
-        'Cache-Control': 'no-store, max-age=0',
-      },
-    });
+    return privateJson({ success: true, subscriptions });
   } catch (error) {
-    console.error('[ICS Subscriptions GET]', error);
-    return NextResponse.json({ error: error?.message || '서버 오류가 발생했습니다.' }, { status: 500 });
+    return internalError('[ICS Subscriptions GET]', error, '캘린더 구독 목록을 불러오지 못했습니다.');
   }
 }
 
 export async function POST(request) {
   try {
+    const auth = await requireApiSession(request, { roles: ['authenticated'], mutation: true });
+    if (auth.response) return auth.response;
+
     const body = await request.json().catch(() => ({}));
     const depts = normalizeIcalDeptList(body.depts || []);
     const label = String(body.label || '').trim();
@@ -81,12 +76,13 @@ export async function POST(request) {
       label: label || defaultLabel,
       depts,
       scope: 'leave-calendar',
+      createdBy: auth.session.userId,
     });
 
     const baseUrl = getPublicBaseUrl(request);
     const { url, webcalUrl } = buildSubscriptionAccessUrls(baseUrl, record.token);
 
-    return NextResponse.json({
+    return privateJson({
       success: true,
       subscription: {
         id: record.id,
@@ -103,7 +99,6 @@ export async function POST(request) {
       webcalUrl,
     });
   } catch (error) {
-    console.error('[ICS Subscriptions POST]', error);
-    return NextResponse.json({ error: error?.message || '서버 오류가 발생했습니다.' }, { status: 500 });
+    return internalError('[ICS Subscriptions POST]', error, '캘린더 구독을 생성하지 못했습니다.');
   }
 }

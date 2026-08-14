@@ -44,7 +44,7 @@ function LoginForm() {
         localStorage.setItem('user-team', data.user.team || '');
       }
 
-      window.location.assign(redirect);
+      window.location.assign(data.user.mustChangePassword ? '/change-password' : redirect);
     } catch {
       setError('네트워크 오류가 발생했습니다. 잠시 후 다시 시도해주세요.');
     } finally {
@@ -173,7 +173,7 @@ function LoginForm() {
         </form>
 
         <div style={{ marginTop: 24, textAlign: 'center', fontSize: 11.5, color: 'var(--text-3)' }}>
-          © HECTO Group · Attendance Management
+          © Dreambay · Attendance Management
         </div>
       </div>
     </div>

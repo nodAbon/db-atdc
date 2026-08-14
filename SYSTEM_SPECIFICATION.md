@@ -97,6 +97,14 @@ sequenceDiagram
     LoginUI->>User: 대시보드('/')로 즉시 리다이렉트 (window.location.assign)
 ```
 
+### 3.2 전역 마스터 계정과 다중 법인 조회
+
+* `db_profiles.is_global_admin`은 일반 관리자 권한과 분리된 전역 조회 권한이다.
+* 마스터 계정은 두 법인 시스템에 모두 로그인할 수 있지만, 데이터를 한 화면에서 합산하지 않는다.
+* `atdc.hectoqnm.co.kr`은 `sa_`/회사번호 1600, `atdc.dreambay.co.kr`은 `db_`/회사번호 1700만 조회한다.
+* 데이터 범위는 계정 권한이 아니라 접속한 시스템 도메인과 배포 설정이 결정한다.
+* 마스터 계정 `hqadmin@hecto.co.kr` 또는 로그인 ID `hqadmin`으로 로그인할 때만 전역 관리자 모드를 서명 쿠키로 활성화한다.
+
 ---
 
 ## 4. 트러블슈팅 및 최적화 내역 (Troubleshooting & Optimizations)

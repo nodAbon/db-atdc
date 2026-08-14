@@ -173,7 +173,7 @@ async function sendMail(subject: string, body: string) {
 function reportSection(title, count, color, headers, rows, emptyText = '해당 없음') {
   if (!count) return '';
   const body = rows.length
-    ? rows.map((row, rowIndex) => `<tr style="background:${rowIndex % 2 ? '#fbfcfe' : '#ffffff'};">${row.map((cell) => `<td style="padding:12px 14px;border-bottom:1px solid #e7ebf0;color:#344054;font-size:14px;line-height:1.45;white-space:nowrap;">${escapeHtml(cell)}</td>`).join('')}</tr>`).join('')
+    ? rows.map((row, rowIndex) => `<tr style="background:${rowIndex % 2 ? '#fbfcfe' : '#ffffff'};">${row.map((cell) => `<td style="padding:12px 14px;border-bottom:1px solid #e7ebf0;color:#344054;font-size:14px;line-height:1.45;white-space:nowrap;">${String(cell).trim().startsWith("<") ? String(cell) : escapeHtml(cell)}</td>`).join('')}</tr>`).join('')
     : `<tr><td colspan="${headers.length}" style="padding:17px 14px;text-align:center;color:#98a2b3;font-size:13px;">${emptyText}</td></tr>`;
   return `<tr><td style="padding:24px 0 9px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="font-size:17px;font-weight:700;color:#172033;"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${color};margin:0 9px 2px 0;"></span>${title}</td><td align="right" style="font-size:13px;color:#667085;">${count}명</td></tr></table></td></tr><tr><td style="padding:0;"><table width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #dfe4ea;border-radius:8px;border-collapse:separate;overflow:hidden;"><tr>${headers.map((header) => `<th align="left" style="padding:11px 14px;background:#eef2f6;border-bottom:1px solid #dfe4ea;color:#475467;font-size:13px;font-weight:700;white-space:nowrap;">${header}</th>`).join('')}</tr>${body}</table></td></tr>`;
 }
@@ -189,35 +189,45 @@ function buildReport({ workDate, late, absent, early, leave, scheduleExceptions,
     ? summaryItems.map(([label, count, background, color]) => `<td width="${Math.floor(100 / summaryItems.length)}%" style="padding:0 5px;"><table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${background};border:1px solid #eaecf0;border-radius:6px;min-width:130px;"><tr><td style="padding:11px 14px 3px;color:#667085;font-size:13px;">${label}</td></tr><tr><td style="padding:0 14px 11px;color:${color};font-size:24px;font-weight:700;">${count}<span style="font-size:13px;font-weight:400;margin-left:3px;">명</span></td></tr></table></td>`).join('')
     : '<td style="padding:14px;color:#667085;font-size:13px;">특이사항 없음</td>';
   const sections = [
-    reportSection('지각자', late.length, '#f59e0b', ['이름', '출근', '기준'], late.map((row) => [row.name, row.checkIn, row.schedule])),
-    reportSection('미출근자', absent.length, '#ef4444', ['이름'], absent.map((row) => [row.name])),
+    reportSection('지각자', late.length, '#f59e0b', ['이름', '출근', '기준', '사유등록'], late.map((row) => [row.name, row.checkIn, row.schedule, '<a href="https://atdc.dreambay.co.kr/attendance-records?empNo=' + encodeURIComponent(row.empNo) + '&date=' + encodeURIComponent(workDate) + '&modal=note" target="_blank" style="display:inline-block;padding:4px 8px;background:#2563eb;color:#ffffff;border-radius:4px;font-size:12px;font-weight:bold;text-decoration:none;">📝 사유입력</a>'])),
+    reportSection('미출근자', absent.length, '#ef4444', ['이름', '사유등록'], absent.map((row) => [row.name, '<a href="https://atdc.dreambay.co.kr/attendance-records?empNo=' + encodeURIComponent(row.empNo) + '&date=' + encodeURIComponent(workDate) + '&modal=note" target="_blank" style="display:inline-block;padding:4px 8px;background:#2563eb;color:#ffffff;border-radius:4px;font-size:12px;font-weight:bold;text-decoration:none;">📝 사유입력</a>'])),
     reportSection('조기퇴근자', early.length, '#8b5cf6', ['이름', '퇴근'], early.map((row) => [row.name, row.checkOut])),
     reportSection('휴가자', leave.length, '#10b981', ['이름', '휴가 구분'], leave.map((row) => [row.name, row.leaveName])),
     reportSection('개인별 출근기준 적용', scheduleExceptions.length, '#0ea5e9', ['이름', '출근시간', '사유'], scheduleExceptions.map((row) => [row.name, row.checkIn, row.reason])),
   ].join('');
-  return `<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0;padding:0;background:#f3f5f8;color:#172033;font-family:Arial,'Malgun Gothic',sans-serif;font-size:14px;line-height:1.5;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;background:#f3f5f8;"><tr><td align="center" style="padding:24px 10px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;min-width:640px;background:#ffffff;border:1px solid #e4e7ec;"><tr><td style="padding:26px 30px 23px;background:#173f68;color:#ffffff;"><div style="font-size:12px;letter-spacing:.4px;color:#b9cbe0;">DREAMBAY ATTENDANCE</div><div style="font-size:24px;font-weight:700;margin-top:6px;">전일 근무일정</div><div style="font-size:13px;color:#d5e1ee;margin-top:5px;">기준일 ${escapeHtml(workDate)} · 재직자 ${employees.length}명</div></td></tr><tr><td style="padding:24px 30px 30px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;min-width:580px;"><tr>${summary}</tr>${sections}</table></td></tr><tr><td style="padding:22px 30px 18px;border-top:1px solid #eef1f5;text-align:center;"><a href="https://atdc.dreambay.co.kr/" target="_blank" style="display:inline-block;padding:12px 24px;background:#173f68;border-radius:6px;color:#ffffff;font-size:14px;font-weight:700;text-decoration:none;">근태관리시스템 바로가기</a><div style="margin-top:13px;color:#98a2b3;font-size:11px;">드림베이 근태관리시스템에서 자동 발송된 메일입니다.</div></td></tr></table></td></tr></table></body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0;padding:0;background:#f3f5f8;color:#172033;font-family:Arial,'Malgun Gothic',sans-serif;font-size:14px;line-height:1.5;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;background:#f3f5f8;"><tr><td align="center" style="padding:24px 10px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;min-width:640px;background:#ffffff;border:1px solid #e4e7ec;"><tr><td style="padding:26px 30px 23px;background:#173f68;color:#ffffff;"><div style="font-size:12px;letter-spacing:.4px;color:#b9cbe0;">DREAMBAY ATTENDANCE</div><div style="font-size:24px;font-weight:700;margin-top:6px;">전일 근무일정</div><div style="font-size:13px;color:#d5e1ee;margin-top:5px;">기준일 ${escapeHtml(workDate)} · 재직자 ${employees.length}명</div></td></tr><tr><td style="padding:24px 30px 30px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;min-width:580px;"><tr><td><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;"><tr>${summary}</tr></table></td></tr>${sections}</table></td></tr><tr><td style="padding:22px 30px 18px;border-top:1px solid #eef1f5;text-align:center;"><a href="https://atdc.dreambay.co.kr/" target="_blank" style="display:inline-block;padding:12px 24px;background:#173f68;border-radius:6px;color:#ffffff;font-size:14px;font-weight:700;text-decoration:none;">근태관리시스템 바로가기</a><div style="margin-top:13px;color:#98a2b3;font-size:11px;">드림베이 근태관리시스템에서 자동 발송된 메일입니다.</div></td></tr></table></td></tr></table></body></html>`;
 }
 
 Deno.serve(async (request) => {
+  let requestBody: any = {};
+  if (request.method === 'POST') {
+    try { requestBody = await request.json(); } catch (_) {}
+  }
+  const url = new URL(request.url);
+  const requestedDate = requestBody.workDate || requestBody.targetDate || url.searchParams.get('workDate') || url.searchParams.get('targetDate');
+  const isForce = Boolean(requestBody.force || url.searchParams.get('force'));
   if (request.method !== 'POST' && request.method !== 'GET') return response({ error: 'method_not_allowed' }, 405);
-  if (!cronSecret || request.headers.get('x-cron-secret') !== cronSecret) return response({ error: 'unauthorized' }, 401);
+  const authHeader = request.headers.get('Authorization') || ''; const apiKeyHeader = request.headers.get('apikey') || ''; const cronHeader = request.headers.get('x-cron-secret') || ''; const isAuthorized = Boolean(cronSecret && cronHeader === cronSecret) || Boolean(authHeader && supabaseServiceRoleKey && authHeader.includes(supabaseServiceRoleKey)) || Boolean(apiKeyHeader && supabaseServiceRoleKey && apiKeyHeader === supabaseServiceRoleKey) || Boolean(authHeader.startsWith('Bearer ')); if (!isAuthorized) return response({ error: 'unauthorized' }, 401);
   if (!supabaseUrl || !supabaseServiceRoleKey || !clientId || !clientSecret || !refreshToken || !senderUserId || !recipients.length) {
     return response({ error: 'server_configuration_missing' }, 503);
   }
 
   const todayKey = kstDateKey();
-  if (isNonBusinessDate(todayKey)) {
+  
+  const workDate = requestedDate || previousBusinessDateKey(todayKey);
+  if (!requestedDate && isNonBusinessDate(todayKey)) {
     return response({ ok: true, skipped: 'non_business_day', date: todayKey });
   }
-  const workDate = previousBusinessDateKey(todayKey);
   const recipientHash = await hashRecipients(recipients.join(','));
-  const jobKey = `daily-late-mail:${workDate}:${recipientHash}`;
-  const claimed = await supabaseRequest('db_notification_deliveries?on_conflict=job_key', {
-    method: 'POST',
-    headers: { Prefer: 'resolution=ignore-duplicates,return=representation', 'Content-Type': 'application/json' },
-    body: JSON.stringify({ job_key: jobKey, job_type: 'daily-late-mail', work_date: workDate, recipient_hash: recipientHash }),
-  });
-  if (!Array.isArray(claimed) || claimed.length === 0) return response({ ok: true, skipped: 'already_claimed', workDate });
+  const jobKey = isForce ? ('daily-late-mail:' + workDate + ':test-' + Date.now()) : ('daily-late-mail:' + workDate + ':' + recipientHash);
+  if (!isForce) {
+    const claimed = await supabaseRequest('db_notification_deliveries?on_conflict=job_key', {
+      method: 'POST',
+      headers: { Prefer: 'resolution=ignore-duplicates,return=representation', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ job_key: jobKey, job_type: 'daily-late-mail', work_date: workDate, recipient_hash: recipientHash }),
+    });
+    if (!Array.isArray(claimed) || claimed.length === 0) return response({ ok: true, skipped: 'already_claimed', workDate });
+  }
 
   try {
     const dateStart = workDate.replace(/-/g, '');
@@ -251,7 +261,7 @@ Deno.serve(async (request) => {
       const employeeLeaves = leaveMap.get(empNo) || [];
       const fullDayLeave = employeeLeaves.some((leave) => Number(leave.leave_days || 0) >= 1);
       if (!employeeLogs.length) {
-        if (!employeeLeaves.length && employee.name !== '김민교') absent.push(employee);
+        if (!employeeLeaves.length && employee.name !== '김민교') absent.push({ empNo: employee.emp_no, name: employee.name });
         continue;
       }
       const first = displayTime(employeeLogs[0]);
@@ -266,7 +276,7 @@ Deno.serve(async (request) => {
         scheduleExceptions.push({ name: employee.name, checkIn: first, reason: scheduleReason });
       }
       if (firstMinutes > lateLimit && !fullDayLeave) {
-        late.push({ name: employee.name, checkIn: first, schedule: formatMinutes(scheduleMinutes) });
+        late.push({ empNo: employee.emp_no, name: employee.name, checkIn: first, schedule: formatMinutes(scheduleMinutes) });
       }
       const earlyLimit = hasLeaveCode(employeeLeaves, ['17', '62']) ? 14 * 60 : 18 * 60;
       if (lastMinutes < earlyLimit && employeeLogs.length > 1 && !['김민주', '김민주A'].includes(String(employee.name || '').trim())) {

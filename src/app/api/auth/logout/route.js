@@ -5,13 +5,26 @@ export async function POST() {
 
   const expireOptions = {
     path: '/',
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
     maxAge: 0,
     expires: new Date(0),
   };
 
-  response.cookies.set('sb-access-token', '', expireOptions);
-  response.cookies.set('user-emp-no', '', expireOptions);
-  response.cookies.set('user-name', '', expireOptions);
+  for (const name of [
+    'sb-access-token',
+    'db-auth-mode',
+    'user-emp-no',
+    'user-login-id',
+    'user-name',
+    'user-team',
+    'user-position',
+    'user-rank',
+    'user-is-admin',
+  ]) {
+    response.cookies.set(name, '', expireOptions);
+  }
 
   return response;
 }

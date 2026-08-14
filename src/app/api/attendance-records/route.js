@@ -1,134 +1,113 @@
-import { NextResponse } from 'next/server';
-import { supabaseAdmin } from '@/lib/supabaseAdmin';
+import { requireApiSession, privateJson, internalError } from '@/lib/apiAuth';
 import { getKstDateKey, shiftKstDateKey } from '@/lib/kstDate';
+import { supabaseAdmin } from '@/lib/supabaseAdmin';
+import {
+  fetchAllRows,
+  getReadableDataSources,
+  parseScopedEmpNo,
+  scopeEmpNo,
+} from '@/lib/supabaseDb';
 
 export const dynamic = 'force-dynamic';
 
-async function fetchAllRows(buildQueryFn, pageSize = 1000) {
-  let allRows = [];
-  let from = 0;
-  let hasMore = true;
-
-  while (hasMore) {
-    const to = from + pageSize - 1;
-    const query = buildQueryFn().range(from, to);
-    const { data, error } = await query;
-
-    if (error) throw error;
-    if (!data || data.length === 0) break;
-
-    allRows.push(...data);
-    if (data.length < pageSize) {
-      hasMore = false;
-    } else {
-      from += pageSize;
-    }
-  }
-
-  return allRows;
-}
-
 const parseDateInput = (value, fallback) => {
   const text = String(value || '').trim();
-  if (!text) return fallback;
   return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : fallback;
 };
 
 const formatAttendanceLogTime = (row = {}) => {
-  if (row.a_time && String(row.a_time).length >= 14) {
-    const aTime = String(row.a_time);
-    return `${aTime.substring(0, 4)}-${aTime.substring(4, 6)}-${aTime.substring(6, 8)} ${aTime.substring(8, 10)}:${aTime.substring(10, 12)}:${aTime.substring(12, 14)}`;
+  const value = String(row.a_time || '').trim();
+  if (/^\d{14}/.test(value)) {
+    return `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)} ${value.slice(8, 10)}:${value.slice(10, 12)}:${value.slice(12, 14)}`;
   }
-  return String(row.a_time || row.log_time || '-');
+  return String(row.log_time || value || '-');
 };
 
 export async function GET(request) {
   try {
-    const { searchParams } = new URL(request.url);
-    const rawEmpNo = String(searchParams.get('empNo') || searchParams.get('emp_no') || '').trim();
-    const today = getKstDateKey(new Date());
-    const from = parseDateInput(searchParams.get('from') || searchParams.get('date'), shiftKstDateKey(today, -30));
-    const to = parseDateInput(searchParams.get('to') || searchParams.get('date'), today);
-    const dept = searchParams.get('dept') || 'ALL';
+    const auth = await requireApiSession(request);
+    if (auth.response) return auth.response;
 
+    const { searchParams } = new URL(request.url);
+    const requestedEmpNo = String(searchParams.get('empNo') || searchParams.get('emp_no') || '').trim();
+    const parsedEmpNo = parseScopedEmpNo(requestedEmpNo);
+    const today = getKstDateKey();
+    const from = parseDateInput(searchParams.get('from') || searchParams.get('date'), shiftKstDateKey(today, -1));
+    const to = parseDateInput(searchParams.get('to') || searchParams.get('date'), today);
+    const dept = String(searchParams.get('dept') || 'ALL').trim().slice(0, 100);
     const fromTime = `${from.replace(/-/g, '')}000000`;
     const toTime = `${shiftKstDateKey(to, 1).replace(/-/g, '')}060000`;
+    const includeAllCompanies = false;
 
-    // 1. 직원 목록 쿼리 빌더
-    const buildEmpQuery = () => {
-      let q = supabaseAdmin
-        .from('db_employees')
-        .select('emp_no, name, dept, is_active')
-        .eq('is_active', true)
-        .order('dept', { ascending: true })
-        .order('name', { ascending: true });
+    const sources = getReadableDataSources(includeAllCompanies)
+      .filter((source) => !parsedEmpNo.companyCode || source.companyCode === parsedEmpNo.companyCode);
 
-      if (dept && dept !== 'ALL') {
-        q = q.eq('dept', dept);
-      }
-      return q;
-    };
+    const sourceResults = await Promise.all(sources.map(async (source) => {
+      const employeeQuery = () => {
+        let query = supabaseAdmin
+          .from(`${source.prefix}_employees`)
+          .select('emp_no,name,dept,company_code,is_active')
+          .eq('is_active', true)
+          .order('dept', { ascending: true })
+          .order('name', { ascending: true });
+        if (dept && dept !== 'ALL') query = query.eq('dept', dept);
+        return query;
+      };
 
-    // 2. 출입기록 쿼리 빌더
-    const buildLogQuery = () => {
-      let q = supabaseAdmin
-        .from('db_attendance')
-        .select('id, emp_no, a_time, log_time, gate_name, sabun')
-        .gte('a_time', fromTime)
-        .lte('a_time', toTime)
-        .order('a_time', { ascending: false });
+      const logQuery = () => {
+        let query = supabaseAdmin
+          .from(`${source.prefix}_attendance`)
+          .select('id,emp_no,a_time,log_time,gate_name,sabun')
+          .gte('a_time', fromTime)
+          .lte('a_time', toTime)
+          .order('a_time', { ascending: false });
+        if (requestedEmpNo && requestedEmpNo !== 'ALL' && parsedEmpNo.empNo) {
+          const raw = parsedEmpNo.empNo;
+          const full = `${source.companyCode}${raw}`;
+          query = query.or(`emp_no.eq.${raw},sabun.eq.${raw},emp_no.eq.${full},sabun.eq.${full}`);
+        }
+        return query;
+      };
 
-      if (rawEmpNo && rawEmpNo !== 'ALL') {
-        const cleanEmpNo = rawEmpNo.replace(/^1700/, '');
-        const fullSabun = `1700${cleanEmpNo}`;
-        q = q.or(`emp_no.eq.${cleanEmpNo},sabun.eq.${cleanEmpNo},emp_no.eq.${fullSabun},sabun.eq.${fullSabun}`);
-      }
-      return q;
-    };
+      const [employees, logs] = await Promise.all([
+        fetchAllRows(employeeQuery),
+        fetchAllRows(logQuery),
+      ]);
+      return { source, employees, logs };
+    }));
 
-    // 병렬 전수 페칭
-    const [employees, rawLogs] = await Promise.all([
-      fetchAllRows(buildEmpQuery),
-      fetchAllRows(buildLogQuery),
-    ]);
+    const employees = sourceResults.flatMap(({ source, employees: rows }) => rows.map((row) => ({
+      ...row,
+      raw_emp_no: row.emp_no,
+      emp_no: scopeEmpNo(row.emp_no, source.companyCode, includeAllCompanies),
+      company_code: row.company_code || source.companyCode,
+      data_source: source.prefix,
+      read_only: source.prefix === 'sa',
+    })));
 
-    const empMap = new Map();
-    (employees || []).forEach((emp) => {
-      empMap.set(emp.emp_no, emp);
-      empMap.set(`1700${emp.emp_no}`, emp);
-    });
-
-    const records = (rawLogs || []).map((row) => {
-      const emp = empMap.get(row.emp_no) || empMap.get(row.sabun) || {};
-      const empNo = emp.emp_no || row.emp_no || (row.sabun ? String(row.sabun).replace(/^1700/, '') : '-');
-      const name = emp.name || '-';
-      const department = emp.dept || '부서미지정';
-      const eventTime = formatAttendanceLogTime(row);
-      const gateName = row.gate_name || '출입';
-
+    const employeeMap = new Map(employees.map((employee) => [employee.emp_no, employee]));
+    const records = sourceResults.flatMap(({ source, logs }) => logs.map((row) => {
+      const scopedEmpNo = scopeEmpNo(row.emp_no || row.sabun, source.companyCode, includeAllCompanies);
+      const employee = employeeMap.get(scopedEmpNo) || {};
       return {
-        id: row.id,
-        emp_no: empNo,
-        name,
-        dept: department,
-        event_time: eventTime,
-        gate_name: gateName,
+        id: includeAllCompanies ? `${source.prefix}:${row.id}` : row.id,
+        emp_no: scopedEmpNo,
+        empNo: scopedEmpNo,
+        raw_emp_no: employee.raw_emp_no || parsedEmpNo.empNo || '',
+        name: employee.name || '-',
+        dept: employee.dept || '부서미지정',
+        company_code: source.companyCode,
+        data_source: source.prefix,
+        read_only: source.prefix === 'sa',
+        event_time: formatAttendanceLogTime(row),
+        gate_name: row.gate_name || '출입',
         source: 'caps',
         a_time: row.a_time,
       };
-    });
+    }));
 
-    return NextResponse.json({
-      records,
-      totalCount: records.length,
-      employees: employees || [],
-    }, {
-      headers: {
-        'Cache-Control': 'public, s-maxage=5, stale-while-revalidate=30',
-      },
-    });
+    return privateJson({ records, logs: records, totalCount: records.length, employees });
   } catch (error) {
-    console.error('attendance-records GET error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError('attendance-records GET error:', error, '출입기록을 불러오지 못했습니다.');
   }
 }

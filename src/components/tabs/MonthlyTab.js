@@ -3,6 +3,7 @@
 import React, { memo, useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { RefreshCw, Download } from 'lucide-react';
 import MonthSearchPicker from '../MonthSearchPicker';
+import AttendanceNoteModal from '../AttendanceNoteModal';
 import { getHolidayName, getLeaveMeta } from '../../lib/leaveRules';
 import { clampToHalfHourSteps, formatHalfHourSteps, getMonthRangeList, normalizeDeptName, normalizeEmpNoKey, formatTimeString } from '../../lib/dashboardUtils';
 import { MONTHLY_DEFAULT_NOTE, buildScheduleOverrideMap, resolveSchedulePairForDate } from '../../lib/scheduleResolver';
@@ -53,13 +54,14 @@ function MonthlyTab({
   const todayHeaderRef = useRef(null);
   const allEmps = visibleMonthlyEmployees;
   const gridData = monthlyData?.gridData || {};
+  const [noteModal, setNoteModal] = useState({ isOpen: false, empNo: '', empName: '', dept: '', workDate: '', note: '', imageUrl: null });
   const overrideLookup = useMemo(() => buildScheduleOverrideMap(monthlyData?.overrides || []), [monthlyData?.overrides]);
 
   const handleExportExcel = () => {
     try {
       const headers = ['사번', '이름', '부서', ...days.map((d) => `${d.dayNum}일(${d.dayOfWeek})`)];
       const rows = allEmps.map((emp) => {
-        const row = [emp.empNo || emp.emp_no, emp.name, emp.dept];
+        const row = [emp.rawEmpNo || emp.empNo || emp.emp_no, emp.name, emp.dept];
         days.forEach((d) => {
           const dateCompact = d.dateStr.replace(/-/g, '');
           const leave = (monthlyData?.leaves || []).find(
@@ -289,6 +291,27 @@ function MonthlyTab({
                                     {timeText}
                                   </span>
                                 ) : null}
+                                {dayStats?.note ? (
+                                  <button
+                                    type='button'
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setNoteModal({
+                                        isOpen: true,
+                                        empNo: emp.empNo || emp.emp_no,
+                                        empName: emp.name,
+                                        dept: emp.dept,
+                                        workDate: d.dateStr,
+                                        note: dayStats.note,
+                                        imageUrl: dayStats.noteImageUrl || null,
+                                      });
+                                    }}
+                                    style={{ marginTop: 2, padding: '1px 4px', fontSize: '9.5px', borderRadius: 4, border: '1px solid rgba(37,99,235,0.4)', backgroundColor: 'rgba(37,99,235,0.1)', color: 'var(--blue)', cursor: 'pointer' }}
+                                    title={'사유: ' + (dayStats.note || '')}
+                                  >
+                                    📝 사유
+                                  </button>
+                                ) : null}
                               </div>
                             ) : timeText ? (
                               <span style={{ fontSize: '11.5px', color: dayStats?.isLate ? 'var(--amber)' : 'var(--text-1)', fontWeight: 600, lineHeight: 1.3 }}>
@@ -308,6 +331,17 @@ function MonthlyTab({
           </table>
         </div>
       )}
+<AttendanceNoteModal
+        isOpen={noteModal.isOpen}
+        onClose={() => setNoteModal((prev) => ({ ...prev, isOpen: false }))}
+        empNo={noteModal.empNo}
+        empName={noteModal.empName}
+        dept={noteModal.dept}
+        workDate={noteModal.workDate}
+        initialNote={noteModal.note}
+        initialImageUrl={noteModal.imageUrl}
+        onSaved={() => refreshData()}
+      />
     </div>
   );
 }

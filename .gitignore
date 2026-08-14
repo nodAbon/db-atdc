@@ -37,3 +37,10 @@ sync/.env
 next-env.d.ts
 
 .vercel
+
+# scratch
+scratch/
+scratch_*.mjs
+scratch_*.txt
+check_dates.mjs
+inspect_data.mjs

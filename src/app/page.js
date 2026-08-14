@@ -58,13 +58,12 @@ function DashboardContent() {
   const fetchDashboardData = useCallback(async () => {
     setDashboardLoading(true);
     try {
-      const res = await fetch(`/api/attendance?dashboardOnly=true&_t=${Date.now()}`, {
-        cache: 'no-store',
-        headers: {
-          'Pragma': 'no-cache',
-          'Cache-Control': 'no-cache',
-        },
+      const params = new URLSearchParams({
+        dashboardOnly: 'true',
+        calendarMonth,
+        _t: String(Date.now()),
       });
+      const res = await fetch(`/api/attendance?${params.toString()}`, { cache: 'no-store' });
       const json = await res.json();
       if (json.success) {
         setDashboardData({
@@ -78,7 +77,7 @@ function DashboardContent() {
     } finally {
       setDashboardLoading(false);
     }
-  }, []);
+  }, [calendarMonth]);
 
   // 월간 근태보고 데이터 로드
   const fetchMonthlyData = useCallback(async (m) => {
@@ -114,10 +113,8 @@ function DashboardContent() {
   useEffect(() => {
     if (activeTab === 'MONTHLY') {
       fetchMonthlyData(selectedMonth);
-    } else if (activeTab === 'DASHBOARD' && dashboardData.employeeStatuses.length === 0) {
-      fetchDashboardData();
     }
-  }, [activeTab, selectedMonth, dashboardData.employeeStatuses.length, fetchMonthlyData, fetchDashboardData]);
+  }, [activeTab, selectedMonth, fetchMonthlyData]);
 
   // 부서 옵션 목록
   const deptOptions = useMemo(() => {

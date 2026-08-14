@@ -132,6 +132,7 @@ export async function GET(_request, context) {
     });
   } catch (error) {
     console.error('[Holiday API Error]', error);
-    return NextResponse.json({ error: error?.message || '공휴일 조회에 실패했습니다.' }, { status: 500 });
+    console.error('holidays GET error:', error);
+    return NextResponse.json({ error: '공휴일 조회에 실패했습니다.' }, { status: 500 });
   }
 }

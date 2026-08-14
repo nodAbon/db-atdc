@@ -1,7 +1,7 @@
 process.env.TZ = 'Asia/Seoul';
 import { NextResponse } from 'next/server';
 import { requireApiSession } from '@/lib/apiAuth';
-import { fetchAttendanceLogs, fetchCalendarLeaves, fetchEmployeeSchedules } from '@/lib/supabaseDb';
+import { fetchAttendanceLogs, fetchCalendarLeaves, fetchEmployeeSchedules, fetchAttendanceNotes } from '@/lib/supabaseDb';
 import { getLeaveMeta } from '@/lib/leaveRules';
 import { getKstDateKey, shiftKstDateKey } from '@/lib/kstDate';
 import { normalizeEmpNoKey, formatTimeString } from '@/lib/dashboardUtils';
@@ -35,7 +35,8 @@ export async function GET(request) {
     // broadens the tenant selected by the site/domain.
     const includeAllCompanies = false;
 
-    let [attendanceData, employeeSchedules, calendarLeaves] = await Promise.all([
+    let [attendanceNotes, attendanceData, employeeSchedules, calendarLeaves] = await Promise.all([
+      fetchAttendanceNotes({ fromDate: month ? month + '-01' : shiftKstDateKey(getKstDateKey(), -7), toDate: month ? month + '-31' : shiftKstDateKey(getKstDateKey(), 1), empNo: empNoFilter }),
       fetchAttendanceLogs(month, { dashboardOnly, excludeLogs, empNo: empNoFilter, includeAllCompanies }),
       fetchEmployeeSchedules({ includeAllCompanies }),
       dashboardOnly && calendarMonth
@@ -83,6 +84,8 @@ export async function GET(request) {
 
     const employeeScheduleMap = buildEmployeeScheduleMap(employeeSchedules);
     const overrideMap = buildScheduleOverrideMap(overrides);
+    const noteMap = new Map();
+    (attendanceNotes || []).forEach(n => noteMap.set(normalizeEmpNoKey(n.emp_no) + '_' + n.work_date, n));
 
     // 날짜별/사원별 연차 헬퍼
     const getEmployeeLeaveForDate = (empNo, dateStrCompat) => {
@@ -219,6 +222,8 @@ export async function GET(request) {
         isLate,
         status,
         todayLeave: todayLeave ? { ...todayLeave, leaveName: todayLeave.leaveName } : null,
+        note: noteMap.get(empKey + '_' + todayStr)?.note || '',
+        noteImageUrl: noteMap.get(empKey + '_' + todayStr)?.image_url || null,
       };
     });
 
@@ -253,6 +258,8 @@ export async function GET(request) {
         in: inTime,
         out: outTime,
         isLate,
+        note: noteMap.get(empKey + '_' + dateStr)?.note || '',
+        noteImageUrl: noteMap.get(empKey + '_' + dateStr)?.image_url || null,
       };
     });
 
@@ -293,6 +300,7 @@ export async function GET(request) {
       deptData,
       leaves,
       overrides,
+      notes: attendanceNotes || [],
       allLogs: parsedLogs,
     };
 

@@ -10,7 +10,7 @@ export const fetchCache = 'force-no-store';
 export async function GET(request) {
   try {
     const token = request.nextUrl.searchParams.get('token') || '';
-    if (!token) {
+    if (!token || token.length > 4096) {
       return NextResponse.json({ error: '토큰이 필요합니다.' }, { status: 400 });
     }
 
@@ -35,6 +35,6 @@ export async function GET(request) {
     });
   } catch (error) {
     console.error('[ICS Subscriptions Query GET]', error);
-    return NextResponse.json({ error: error?.message || '서버 오류가 발생했습니다.' }, { status: 500 });
+    return NextResponse.json({ error: '캘린더를 생성하지 못했습니다.' }, { status: 500 });
   }
 }

@@ -1,5 +1,5 @@
 import { supabaseAdmin } from './supabaseAdmin';
-import { createIcalSubscriptionToken, verifyIcalSubscriptionToken } from './icalToken';
+import crypto from 'crypto';
 
 export function buildSubscriptionAccessUrls(baseUrl, token) {
   const cleanBase = String(baseUrl || '').replace(/\/$/, '');
@@ -37,29 +37,13 @@ export async function getIcalSubscriptionRecordByToken(token) {
     console.error('getIcalSubscriptionRecordByToken DB lookup error:', e);
   }
 
-  // 2. 만약 DB에 아직 없는 자가 포함 서명 토큰인 경우 검증하여 반환
-  const verified = verifyIcalSubscriptionToken(token);
-  if (verified) {
-    return {
-      token,
-      label: verified.label || '부서 연차 구독',
-      depts: verified.depts || [],
-      scope: verified.scope || 'leave-calendar',
-      is_active: true,
-      created_at: verified.createdAt || new Date().toISOString(),
-    };
-  }
-
   return null;
 }
 
-export async function createIcalSubscriptionRecord({ label, depts, scope = 'leave-calendar' }) {
-  // HMAC-SHA256 Base64URL 서명 토큰 생성 (길고 안전한 표준 토큰)
-  const token = createIcalSubscriptionToken({
-    label,
-    depts,
-    scope,
-  });
+export async function createIcalSubscriptionRecord({ label, depts, scope = 'leave-calendar', createdBy = null }) {
+  // Opaque 256-bit bearer token. The DB row is the source of truth so every
+  // token can be revoked immediately.
+  const token = crypto.randomBytes(32).toString('base64url');
 
   const { data, error } = await supabaseAdmin
     .from('db_ical_subscriptions')
@@ -69,22 +53,14 @@ export async function createIcalSubscriptionRecord({ label, depts, scope = 'leav
       depts: Array.isArray(depts) ? depts : [],
       scope,
       is_active: true,
+      created_by: createdBy,
       created_at: new Date().toISOString(),
     })
     .select()
     .single();
 
   if (error) {
-    console.error('createIcalSubscriptionRecord DB insert error:', error);
-    // DB 인서트에 실패해도 자가 포함 서명 토큰 객체 반환
-    return {
-      token,
-      label,
-      depts,
-      scope,
-      is_active: true,
-      created_at: new Date().toISOString(),
-    };
+    throw error;
   }
 
   return data;

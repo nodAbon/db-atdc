@@ -26,6 +26,7 @@ function EmployeesPageContent() {
   const [theme, setTheme] = usePersistentTheme('light');
   const [employees, setEmployees] = useState([]);
   const [departments, setDepartments] = useState([]);
+  const [canManageEmployees, setCanManageEmployees] = useState(false);
   const [loading, setLoading] = useState(true);
 
   // 검색 및 필터
@@ -48,9 +49,11 @@ function EmployeesPageContent() {
     position: '',
     email: '',
     login_id: '',
-    password: '1234',
+    password: '',
     is_admin: false,
     is_active: true,
+    schedule_time: '09:00',
+    schedule_reason: '',
   });
 
   const [newPassword, setNewPassword] = useState('');
@@ -66,6 +69,7 @@ function EmployeesPageContent() {
       if (data.success) {
         setEmployees(data.employees || []);
         setDepartments(data.departments || []);
+        setCanManageEmployees(data.canManage === true);
       }
     } catch (e) {
       console.error('Failed to fetch employees:', e);
@@ -127,9 +131,11 @@ function EmployeesPageContent() {
       position: '팀원',
       email: '',
       login_id: '',
-      password: '1234',
+      password: '',
       is_admin: false,
       is_active: true,
+      schedule_time: '09:00',
+      schedule_reason: '',
     });
     setIsAddModalOpen(true);
   };
@@ -177,6 +183,8 @@ function EmployeesPageContent() {
       login_id: emp.login_id || emp.emp_no,
       is_admin: Boolean(emp.is_admin),
       is_active: Boolean(emp.is_active),
+      schedule_time: emp.schedule_time || '09:00',
+      schedule_reason: emp.schedule_reason || '',
     });
     setIsEditModalOpen(true);
   };
@@ -209,7 +217,7 @@ function EmployeesPageContent() {
   // [비밀번호 변경] 모달 열기
   const handleOpenPasswordModal = (emp) => {
     setSelectedEmp(emp);
-    setNewPassword('1234');
+    setNewPassword('');
     setIsPasswordModalOpen(true);
   };
 
@@ -272,7 +280,7 @@ function EmployeesPageContent() {
     try {
       const headers = ['사번', '성명', '부서', '직급', '직책', '이메일', '로그인ID', '재직상태', '관리자권한', '등록일시'];
       const rows = filteredEmployees.map((e) => [
-        e.emp_no,
+        e.raw_emp_no || e.emp_no,
         e.name,
         e.dept,
         e.rank || '-',
@@ -332,7 +340,7 @@ function EmployeesPageContent() {
                 직원 및 계정 관리
               </h2>
               <span className="badge-status badge-blue" style={{ fontSize: '12px', padding: '3px 8px' }}>
-                드림베이 (1700)
+                드림베이
               </span>
             </div>
             <p style={{ fontSize: '13.5px', color: 'var(--text-2)', marginTop: '4px', margin: 0 }}>
@@ -363,15 +371,17 @@ function EmployeesPageContent() {
               <span>엑셀 다운로드</span>
             </button>
 
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={handleOpenAddModal}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', height: '38px', fontWeight: 700 }}
-            >
-              <UserPlus size={16} />
-              <span>+ 신규 직원 등록</span>
-            </button>
+            {canManageEmployees && (
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={handleOpenAddModal}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', height: '38px', fontWeight: 700 }}
+              >
+                <UserPlus size={16} />
+                <span>+ 신규 직원 등록</span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -502,6 +512,7 @@ function EmployeesPageContent() {
                   <th style={{ width: '90px' }}>직책</th>
                   <th style={{ width: '160px' }}>이메일</th>
                   <th style={{ width: '110px' }}>로그인 ID</th>
+                  <th style={{ width: '105px', textAlign: 'center' }}>출근 기준</th>
                   <th style={{ width: '80px', textAlign: 'center' }}>재직상태</th>
                   <th style={{ width: '80px', textAlign: 'center' }}>권한</th>
                   <th style={{ width: '130px', textAlign: 'center' }}>관리 액션</th>
@@ -510,14 +521,14 @@ function EmployeesPageContent() {
               <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan={10} style={{ textAlign: 'center', padding: '60px 16px', color: 'var(--text-3)' }}>
+                    <td colSpan={11} style={{ textAlign: 'center', padding: '60px 16px', color: 'var(--text-3)' }}>
                       <RefreshCw size={24} className="spin" style={{ margin: '0 auto 10px', display: 'block', color: 'var(--blue)' }} />
                       직원 목록을 불러오는 중입니다...
                     </td>
                   </tr>
                 ) : filteredEmployees.length === 0 ? (
                   <tr>
-                    <td colSpan={10} style={{ textAlign: 'center', padding: '60px 16px', color: 'var(--text-3)' }}>
+                    <td colSpan={11} style={{ textAlign: 'center', padding: '60px 16px', color: 'var(--text-3)' }}>
                       조건에 일치하는 직원이 없습니다.
                     </td>
                   </tr>
@@ -525,7 +536,7 @@ function EmployeesPageContent() {
                   filteredEmployees.map((emp) => (
                     <tr key={emp.emp_no} style={{ opacity: emp.is_active ? 1 : 0.6 }}>
                       <td style={{ textAlign: 'center', fontWeight: 700, fontFamily: 'monospace' }}>
-                        {emp.emp_no}
+                        {emp.raw_emp_no || emp.emp_no}
                       </td>
                       <td style={{ textAlign: 'center', fontWeight: 700, color: 'var(--text-1)' }}>
                         {emp.name}
@@ -546,6 +557,14 @@ function EmployeesPageContent() {
                         {emp.login_id || emp.emp_no}
                       </td>
                       <td style={{ textAlign: 'center' }}>
+                        <span
+                          className={`badge-status ${emp.schedule_time !== '09:00' ? 'badge-purple' : ''}`}
+                          title={emp.schedule_reason || '기본 출근시간'}
+                        >
+                          {emp.schedule_time || '09:00'}
+                        </span>
+                      </td>
+                      <td style={{ textAlign: 'center' }}>
                         {emp.is_active ? (
                           <span className="badge-status badge-checkin">재직</span>
                         ) : (
@@ -562,7 +581,9 @@ function EmployeesPageContent() {
                         )}
                       </td>
                       <td style={{ textAlign: 'center' }}>
-                        <div style={{ display: 'inline-flex', gap: '4px' }}>
+                        {emp.read_only ? (
+                          <span className="badge-status badge-purple">조회 전용</span>
+                        ) : <div style={{ display: 'inline-flex', gap: '4px' }}>
                           <button
                             type="button"
                             className="btn btn-secondary"
@@ -591,7 +612,7 @@ function EmployeesPageContent() {
                           >
                             <Trash2 size={12} />
                           </button>
-                        </div>
+                        </div>}
                       </td>
                     </tr>
                   ))
@@ -705,16 +726,50 @@ function EmployeesPageContent() {
                   />
                 </div>
 
+                <div style={{ padding: '12px', border: '1px solid var(--border)', borderRadius: '10px', background: 'var(--bg-card-2)' }}>
+                  <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-1)', marginBottom: '10px' }}>개인별 출근 기준</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: '12px' }}>
+                    <div>
+                      <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-2)', display: 'block', marginBottom: '4px' }}>출근시간</label>
+                      <input
+                        type="time"
+                        required
+                        value={formData.schedule_time}
+                        onChange={(e) => setFormData({ ...formData, schedule_time: e.target.value })}
+                        className="input-field"
+                        style={{ width: '100%', height: '36px' }}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-2)', display: 'block', marginBottom: '4px' }}>지정 사유</label>
+                      <input
+                        type="text"
+                        maxLength={500}
+                        required={formData.schedule_time !== '09:00'}
+                        placeholder="09:00과 다른 경우 필수"
+                        value={formData.schedule_reason}
+                        onChange={(e) => setFormData({ ...formData, schedule_reason: e.target.value })}
+                        className="input-field"
+                        style={{ width: '100%', height: '36px' }}
+                      />
+                    </div>
+                  </div>
+                </div>
+
                 <div>
                   <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-2)', display: 'block', marginBottom: '4px' }}>초기 로그인 비밀번호</label>
                   <input
-                    type="text"
+                    type="password"
+                    required
+                    minLength={8}
+                    maxLength={128}
+                    autoComplete="new-password"
                     value={formData.password}
                     onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                     className="input-field"
                     style={{ width: '100%', height: '36px' }}
                   />
-                  <small style={{ color: 'var(--text-3)', fontSize: '11px', marginTop: '2px', display: 'block' }}>기본값은 1234 입니다.</small>
+                  <small style={{ color: 'var(--text-3)', fontSize: '11px', marginTop: '2px', display: 'block' }}>8자 이상, 영문·숫자·특수문자 조합으로 입력하세요.</small>
                 </div>
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 0' }}>
@@ -839,6 +894,39 @@ function EmployeesPageContent() {
                   />
                 </div>
 
+                <div style={{ padding: '12px', border: '1px solid var(--border)', borderRadius: '10px', background: 'var(--bg-card-2)' }}>
+                  <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-1)', marginBottom: '10px' }}>개인별 출근 기준</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: '12px' }}>
+                    <div>
+                      <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-2)', display: 'block', marginBottom: '4px' }}>출근시간</label>
+                      <input
+                        type="time"
+                        required
+                        value={formData.schedule_time}
+                        onChange={(e) => setFormData({ ...formData, schedule_time: e.target.value })}
+                        className="input-field"
+                        style={{ width: '100%', height: '36px' }}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-2)', display: 'block', marginBottom: '4px' }}>지정 사유</label>
+                      <input
+                        type="text"
+                        maxLength={500}
+                        required={formData.schedule_time !== '09:00'}
+                        placeholder="예: 육아기 단축근무, 시차출퇴근"
+                        value={formData.schedule_reason}
+                        onChange={(e) => setFormData({ ...formData, schedule_reason: e.target.value })}
+                        className="input-field"
+                        style={{ width: '100%', height: '36px' }}
+                      />
+                    </div>
+                  </div>
+                  <div style={{ marginTop: '7px', fontSize: '11px', color: 'var(--text-3)', lineHeight: 1.4 }}>
+                    지정한 시간이 해당 직원의 기본 지각 판정 기준이 됩니다. 날짜별 스케줄 변경이 있으면 날짜별 설정이 우선합니다.
+                  </div>
+                </div>
+
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '6px 0' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <input
@@ -905,8 +993,11 @@ function EmployeesPageContent() {
                 <div>
                   <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-2)', display: 'block', marginBottom: '4px' }}>새 비밀번호 입력 *</label>
                   <input
-                    type="text"
+                    type="password"
                     required
+                    minLength={8}
+                    maxLength={128}
+                    autoComplete="new-password"
                     placeholder="새 비밀번호"
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
@@ -914,7 +1005,7 @@ function EmployeesPageContent() {
                     style={{ width: '100%', height: '38px', fontSize: '14px', fontWeight: 600 }}
                   />
                   <small style={{ color: 'var(--text-3)', fontSize: '11px', marginTop: '4px', display: 'block' }}>
-                    변경 즉시 해당 직원이 새 비밀번호로 로그인할 수 있습니다.
+                    변경 후 해당 직원은 로그인하여 새 비밀번호를 한 번 더 변경해야 합니다.
                   </small>
                 </div>
 

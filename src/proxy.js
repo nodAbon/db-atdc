@@ -1,9 +1,8 @@
 import { NextResponse } from 'next/server';
 
-export function middleware(request) {
+export function proxy(request) {
   const { pathname } = request.nextUrl;
 
-  // 1. API 및 공개 경로, 정적 자산은 미들웨어 통과 (0ms 오버헤드)
   if (
     pathname.startsWith('/api') ||
     pathname.startsWith('/login') ||
@@ -17,14 +16,12 @@ export function middleware(request) {
     return NextResponse.next();
   }
 
-  // 2. 보호된 HTML 페이지 접근 시 세션 쿠키 검사
-  const token = request.cookies.get('sb-access-token')?.value || request.cookies.get('user-emp-no')?.value;
-
+  // This is only an early navigation gate. Every private API independently
+  // validates the token and role before accessing the service-role client.
+  const token = request.cookies.get('sb-access-token')?.value;
   if (!token) {
     const loginUrl = new URL('/login', request.url);
-    if (pathname !== '/') {
-      loginUrl.searchParams.set('redirect', pathname);
-    }
+    if (pathname !== '/') loginUrl.searchParams.set('redirect', pathname);
     return NextResponse.redirect(loginUrl);
   }
 
@@ -32,7 +29,5 @@ export function middleware(request) {
 }
 
 export const config = {
-  matcher: [
-    '/((?!_next/static|_next/image|favicon.ico).*)',
-  ],
+  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
 };

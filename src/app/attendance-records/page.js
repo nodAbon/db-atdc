@@ -3,6 +3,8 @@
 import React, { useState, useEffect, useMemo, useCallback, Suspense } from 'react';
 import AppSidebar from '@/components/AppSidebar';
 import { usePersistentTheme } from '@/lib/usePersistentTheme';
+import { useSearchParams } from 'next/navigation';
+import AttendanceNoteModal from '@/components/AttendanceNoteModal';
 import { getKstDateKey, shiftKstDateKey } from '@/lib/kstDate';
 import {
   Clock,
@@ -14,6 +16,8 @@ import {
 } from 'lucide-react';
 
 function AttendanceRecordsContent() {
+  const searchParams = useSearchParams();
+  const [noteModal, setNoteModal] = useState({ isOpen: false, empNo: '', empName: '', dept: '', workDate: '', note: '', imageUrl: null });
   const [theme, setTheme] = usePersistentTheme('light');
   const [time, setTime] = useState('');
 
@@ -72,6 +76,27 @@ function AttendanceRecordsContent() {
   useEffect(() => {
     loadEmployees();
   }, [loadEmployees]);
+
+  useEffect(() => {
+    const pEmpNo = searchParams.get('empNo');
+    const pDate = searchParams.get('date') || searchParams.get('workDate');
+    const pModal = searchParams.get('modal') || searchParams.get('openModal');
+    if (pEmpNo && pDate) {
+      setSelectedEmpNo(pEmpNo);
+      setFromDate(pDate);
+      setToDate(pDate);
+      const targetEmp = employees.find((e) => e.emp_no === pEmpNo);
+      setNoteModal({
+        isOpen: pModal === 'note' || Boolean(pModal),
+        empNo: pEmpNo,
+        empName: targetEmp?.name || pEmpNo,
+        dept: targetEmp?.dept || '',
+        workDate: pDate,
+        note: '',
+        imageUrl: null,
+      });
+    }
+  }, [searchParams, employees]);
 
   // 출입 기록 로드
   const loadLogs = useCallback(async () => {
@@ -475,7 +500,8 @@ function AttendanceRecordsContent() {
                         </>
                       )}
                       <th style={{ width: '110px' }}>구분</th>
-                      <th>메모</th>
+                      <th>사유 / 메모</th>
+                      <th style={{ width: '90px', textAlign: 'center' }}>사유등록</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -509,7 +535,10 @@ function AttendanceRecordsContent() {
                           </span>
                         </td>
                         <td style={{ color: 'var(--text-2)', fontSize: 13 }}>
-                          {log.memo}
+                          {log.memo || '-'}
+                        </td>
+                        <td style={{ textAlign: 'center' }}>
+                          <button type='button' onClick={() => setNoteModal({ isOpen: true, empNo: log.empNo, empName: log.name, dept: log.dept, workDate: log.dateDisplay, note: log.memo || '', imageUrl: null })} style={{ padding: '3px 8px', fontSize: 12, borderRadius: 6, border: '1px solid var(--border)', backgroundColor: 'var(--bg-card)', color: 'var(--blue)', cursor: 'pointer' }}>📝 사유</button>
                         </td>
                       </tr>
                     ))}
@@ -520,6 +549,7 @@ function AttendanceRecordsContent() {
           </div>
         </div>
       </main>
+      <AttendanceNoteModal isOpen={noteModal.isOpen} onClose={() => setNoteModal((prev) => ({ ...prev, isOpen: false }))} empNo={noteModal.empNo} empName={noteModal.empName} dept={noteModal.dept} workDate={noteModal.workDate} initialNote={noteModal.note} initialImageUrl={noteModal.imageUrl} onSaved={() => loadLogs()} />
     </div>
   );
 }
