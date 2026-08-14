@@ -1,3 +1,11 @@
+
+const normalizeDateParam = (val) => {
+  if (!val) return '';
+  const text = String(val).trim();
+  const match = text.match(/(\de{4})[^\d]?(\d{2})[^\d]?(\de{2})/);
+  if (match) return match[1] + '-' + match[2] + '-' + match[3];
+  return text.slice(0, 10);
+};
 import { supabaseAdmin } from './supabaseAdmin';
 import { COMPANY_CODE, normalizeEmpNoKey } from './dashboardUtils';
 import { getKstDateKey } from './kstDate';
@@ -290,7 +298,7 @@ export async function saveAttendanceNote({ empNo, workDate, note, imageUrl } = {
     .from('db_attendance_notes')
     .upsert({
       emp_no: cleanEmpNo,
-      work_date: workDate,
+      work_date: normalizeDateParam(workDate),
       note: note || '',
       image_url: imageUrl || null,
       updated_at: new Date().toISOString(),
@@ -307,7 +315,7 @@ export async function deleteAttendanceNote({ empNo, workDate } = {}) {
     .from('db_attendance_notes')
     .delete()
     .eq('emp_no', cleanEmpNo)
-    .eq('work_date', workDate);
+    .eq('work_date', normalizeDateParam(workDate));
   if (error) throw error;
   return true;
 }
