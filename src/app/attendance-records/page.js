@@ -246,8 +246,11 @@ function AttendanceRecordsContent() {
           badgeClass = 'badge-access';
         }
 
+        const isCheckinRow = (totalCount === 1 || idx === 0);
         result.push({
           ...log,
+          note: isCheckinRow ? (log.note || '') : '',
+          noteImageUrl: isCheckinRow ? (log.noteImageUrl || null) : null,
           timeOnly: formatTimeStringOnly(log.a_time || log.logTime),
           dateDisplay: formatDisplayDate(log.rawWorkDate),
           tagType,
