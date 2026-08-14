@@ -19,10 +19,20 @@ export default function AttendanceNoteModal({ isOpen, onClose, empNo, empName, d
       setImageBase64(null);
       setImagePreview(initialImageUrl || null);
       setError(null);
-      if (!initialNote && empNo && workDate) {
-        fetch('/api/attendance-notes?empNo=' + empNo + '&from=' + workDate + '&to=' + workDate)
+      const isSystemMemo = initialNote && (initialNote.includes('기록') || initialNote.includes('출근 (') || initialNote.includes('퇴근 ('));
+      if (isSystemMemo) setNote('');
+
+      if (empNo && workDate) {
+        const cleanDate = String(workDate).slice(0, 10).replace(/\./g, '-');
+        fetch('/api/attendance-notes?empNo=' + empNo + '&from=' + cleanDate + '&to=' + cleanDate)
           .then(r => r.json())
-          .then(d => { if (d?.notes?.length > 0) { setNote(d.notes[0].note || ''); setImageUrl(d.notes[0].image_url || null); setImagePreview(d.notes[0].image_url || null); } })
+          .then(d => {
+            if (d?.notes?.length > 0) {
+              setNote(d.notes[0].note || '');
+              setImageUrl(d.notes[0].image_url || null);
+              setImagePreview(d.notes[0].image_url || null);
+            }
+          })
           .catch(() => {});
       }
     }

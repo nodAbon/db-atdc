@@ -547,7 +547,36 @@ function AttendanceRecordsContent() {
                           )}
                         </td>
                         <td style={{ textAlign: 'center' }}>
-                          <button type='button' onClick={() => setNoteModal({ isOpen: true, empNo: log.empNo, empName: log.name, dept: log.dept, workDate: log.dateDisplay, note: log.memo || '', imageUrl: null })} style={{ padding: '3px 8px', fontSize: 12, borderRadius: 6, border: '1px solid var(--border)', backgroundColor: 'var(--bg-card)', color: 'var(--blue)', cursor: 'pointer' }}>📝 사유</button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const rawD = log.rawWorkDate || '';
+                              const cleanDate = rawD.length === 8
+                                ? `${rawD.slice(0, 4)}-${rawD.slice(4, 6)}-${rawD.slice(6, 8)}`
+                                : (log.dateDisplay || '').slice(0, 10).replace(/\./g, '-');
+                              setNoteModal({
+                                isOpen: true,
+                                empNo: log.raw_emp_no || log.empNo,
+                                empName: log.name,
+                                dept: log.dept,
+                                workDate: cleanDate,
+                                note: log.note || '',
+                                imageUrl: log.noteImageUrl || null,
+                              });
+                            }}
+                            style={{
+                              padding: '3px 8px',
+                              fontSize: 12,
+                              borderRadius: 6,
+                              border: '1px solid var(--border)',
+                              backgroundColor: log.note ? 'rgba(37,99,235,0.08)' : 'var(--bg-card)',
+                              color: 'var(--blue)',
+                              fontWeight: log.note ? 600 : 400,
+                              cursor: 'pointer',
+                            }}
+                          >
+                            {log.note ? '📜 수정' : '📜 사유'}
+                          </button>
                         </td>
                       </tr>
                     ))}
